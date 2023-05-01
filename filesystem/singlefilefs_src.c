@@ -10,15 +10,11 @@
 
 #include "singlefilefs.h"
 
-
-
 static struct super_operations singlefilefs_super_ops = {
 };
 
-
 static struct dentry_operations singlefilefs_dentry_ops = {
 };
-
 
 
 int singlefilefs_fill_super(struct super_block *sb, void *data, int silent) {   
@@ -106,42 +102,7 @@ struct dentry *singlefilefs_mount(struct file_system_type *fs_type, int flags, c
 //file system structure
 static struct file_system_type onefilefs_type = {
 	.owner = THIS_MODULE,
-        .name           = "singlefilefs",
-        .mount          = singlefilefs_mount,
-        .kill_sb        = singlefilefs_kill_superblock,
+    .name           = "singlefilefs",
+    .mount          = singlefilefs_mount,
+    .kill_sb        = singlefilefs_kill_superblock,
 };
-
-
-static int singlefilefs_init(void) {
-
-    int ret;
-
-    //register filesystem
-    ret = register_filesystem(&onefilefs_type);
-    if (likely(ret == 0))
-        printk("%s: sucessfully registered singlefilefs\n",MOD_NAME);
-    else
-        printk("%s: failed to register singlefilefs - error %d", MOD_NAME,ret);
-
-    return ret;
-}
-
-static void singlefilefs_exit(void) {
-
-    int ret;
-
-    //unregister filesystem
-    ret = unregister_filesystem(&onefilefs_type);
-
-    if (likely(ret == 0))
-        printk("%s: sucessfully unregistered file system driver\n",MOD_NAME);
-    else
-        printk("%s: failed to unregister singlefilefs driver - error %d", MOD_NAME, ret);
-}
-
-module_init(singlefilefs_init);
-module_exit(singlefilefs_exit);
-
-MODULE_LICENSE("GPL");
-MODULE_AUTHOR("Matteo Fanfarillo <matteo.fanfarillo@gmail.com>");
-MODULE_DESCRIPTION("SINGLE-FILE-FS");

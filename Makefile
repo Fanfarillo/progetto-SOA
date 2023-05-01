@@ -1,17 +1,17 @@
 obj-m += singlefilefs.o
-singlefilefs-objs += singlefilefs_src.o file.o dir.o
+singlefilefs-objs += initAndExit.o filesystem/file.o filesystem/dir.o
 
 override DATA_BLOCKS = 10
 TOT_BLOCKS = $(shell expr $(DATA_BLOCKS) + 2)
 override MOUNT_DIR = ./mount/
 
 all:
-	gcc singlefilemakefs.c -o singlefilemakefs
+	gcc filesystem/singlefilemakefs.c -o filesystem/singlefilemakefs
 	make -C /lib/modules/$(shell uname -r)/build M=$(PWD) modules
 
 clean:
 	make -C /lib/modules/$(shell uname -r)/build M=$(PWD) clean
-	rm singlefilemakefs
+	rm ./filesystem/singlefilemakefs
 
 del-files:
 	rm -fv ./*.o
@@ -20,14 +20,17 @@ del-files:
 	rm -fv ./*.ko
 	rm -fv ./*.symvers
 	rm -fv ./*.order
-	rm image .dir.o.cmd .file.o.cmd .Module.symvers.cmd .modules.order.cmd
-	rm .singlefilefs_src.o.cmd .singlefilefs.ko.cmd .singlefilefs.mod.cmd
+	rm -fv ./filesystem/*.o
+	rm image
+	rm ./filesystem/.dir.o.cmd ./filesystem/.file.o.cmd 
+	rm .Module.symvers.cmd .modules.order.cmd
+	rm .initAndExit.o.cmd .singlefilefs.ko.cmd .singlefilefs.mod.cmd
 	rm .singlefilefs.mod.o.cmd .singlefilefs.o.cmd
 
 create-fs:
 # Necessario aggiungere il parametro $(DATA_BLOCKS) a ./singlefilemakefs image
 	dd bs=4096 count=$(TOT_BLOCKS) if=/dev/zero of=image
-	./singlefilemakefs image
+	./filesystem/singlefilemakefs image
 	mkdir ./mount
 	
 mount-fs:
@@ -42,3 +45,14 @@ insmod:
 
 rmmod:
 	rmmod singlefilefs
+
+# USAGE:
+# make
+# sudo make insmod
+# sudo make create-fs
+# sudo make mount-fs
+#
+# sudo make clean
+# sudo make unmount-fs
+# sudo make rmmod
+# sudo make del-files
