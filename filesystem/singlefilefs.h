@@ -5,19 +5,19 @@
 #include <linux/fs.h>
 
 
-#define MOD_NAME "SINGLE FILE FS"
+#define MOD_NAME "SINGLE FILE FS"		//nome del modulo
 
-#define MAGIC 0x42424242
-#define DEFAULT_BLOCK_SIZE 4096
-#define SB_BLOCK_NUMBER 0
+#define MAGIC 0x42424242				//magic number: è un identificatore univoco nel filesystem
+#define DEFAULT_BLOCK_SIZE 4096			//dimensione di un blocco di memoria utilizzato dal filesystem
+#define SB_BLOCK_NUMBER 0				//numero di blocco del superblock
 #define DEFAULT_FILE_INODE_BLOCK 1
 
-#define FILENAME_MAXLEN 255
+#define FILENAME_MAXLEN 255				//lunghezza masssima del nome di un file
 
-#define SINGLEFILEFS_ROOT_INODE_NUMBER 10
-#define SINGLEFILEFS_FILE_INODE_NUMBER 1
+#define SINGLEFILEFS_ROOT_INODE_NUMBER 10	//numero di inode utilizzato dalla root del filesystem
+#define SINGLEFILEFS_FILE_INODE_NUMBER 1	//numero di inode utilizzato dai file del filesystem
 
-#define SINGLEFILEFS_INODES_BLOCK_NUMBER 1
+#define SINGLEFILEFS_INODES_BLOCK_NUMBER 1	//numero di blocchi di inode utilizzati dal filesystem
 
 #define UNIQUE_FILE_NAME "the-file"
 

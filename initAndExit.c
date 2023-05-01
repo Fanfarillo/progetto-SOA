@@ -10,25 +10,27 @@
 
 #include "filesystem/singlefilefs_src.c"
 
+//funzione che registra il file system "singlefilefs" nel kernel Linux.
 static int singlefilefs_init(void) {
 
     int ret;
 
-    //register filesystem
+    //register filesystem (type: onefilefs_type)
     ret = register_filesystem(&onefilefs_type);
-    if (likely(ret == 0))
+    if (likely(ret == 0))   //likely(): macro usata per fornire un suggerimento al compilatore sul percorso d'esecuzione più probabile.
         printk("%s: sucessfully registered singlefilefs\n",MOD_NAME);
     else
         printk("%s: failed to register singlefilefs - error %d", MOD_NAME,ret);
 
-    return ret;
+    return ret; //return: valore intero che rappresenta il risultato della registrazione del file system
 }
 
+//funzione che deregistra il file system "singlefilefs" precedentemente registrato con singlefilefs_init().
 static void singlefilefs_exit(void) {
 
     int ret;
 
-    //unregister filesystem
+    //unregister file system
     ret = unregister_filesystem(&onefilefs_type);
 
     if (likely(ret == 0))
