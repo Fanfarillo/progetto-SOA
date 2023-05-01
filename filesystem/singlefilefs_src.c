@@ -56,7 +56,7 @@ int singlefilefs_fill_super(struct super_block *sb, void *data, int silent) {
     }
 
     root_inode->i_ino = SINGLEFILEFS_ROOT_INODE_NUMBER;//this is actually 10
-    inode_init_owner(root_inode, NULL, S_IFDIR);//set the root user as owned of the FS root
+    inode_init_owner(&init_user_ns, root_inode, NULL, S_IFDIR);//set the root user as owned of the FS root
     root_inode->i_sb = sb;
     root_inode->i_op = &onefilefs_inode_ops;//set our inode operations
     root_inode->i_fop = &onefilefs_dir_operations;//set our file operations

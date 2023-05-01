@@ -1,5 +1,5 @@
 obj-m += singlefilefs.o
-singlefilefs-objs += singlefilefs.o file.o dir.o
+singlefilefs-objs += singlefilefs_src.o file.o dir.o
 
 override DATA_BLOCKS = 10
 TOT_BLOCKS = $(shell expr $(DATA_BLOCKS) + 2)
@@ -7,12 +7,22 @@ override MOUNT_DIR = ./mount/
 
 all:
 	gcc singlefilemakefs.c -o singlefilemakefs
-	gcc -I /usr/src/linux-headers-$(uname -r) singlefilefs_src.c -o singlefilefs_src
 	make -C /lib/modules/$(shell uname -r)/build M=$(PWD) modules
 
 clean:
 	make -C /lib/modules/$(shell uname -r)/build M=$(PWD) clean
 	rm singlefilemakefs
+
+del-files:
+	rm -fv ./*.o
+	rm -fv ./*.mod
+	rm -fv ./*.mod.c
+	rm -fv ./*.ko
+	rm -fv ./*.symvers
+	rm -fv ./*.order
+	rm image .dir.o.cmd .file.o.cmd .Module.symvers.cmd .modules.order.cmd
+	rm .singlefilefs_src.o.cmd .singlefilefs.ko.cmd .singlefilefs.mod.cmd
+	rm .singlefilefs.mod.o.cmd .singlefilefs.o.cmd
 
 create-fs:
 # Necessario aggiungere il parametro $(DATA_BLOCKS) a ./singlefilemakefs image

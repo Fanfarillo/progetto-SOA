@@ -80,7 +80,7 @@ struct dentry *onefilefs_lookup(struct inode *parent_inode, struct dentry *child
 
 
 	//this work is done if the inode was not already cached
-	inode_init_owner(the_inode, NULL, S_IFREG );
+	inode_init_owner(&init_user_ns, the_inode, NULL, S_IFREG );
 	the_inode->i_mode = S_IFREG | S_IRUSR | S_IRGRP | S_IROTH | S_IWUSR | S_IWGRP | S_IXUSR | S_IXGRP | S_IXOTH;
         the_inode->i_fop = &onefilefs_file_operations;
 	the_inode->i_op = &onefilefs_inode_ops;
