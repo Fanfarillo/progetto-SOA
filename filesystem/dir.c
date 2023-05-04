@@ -11,14 +11,19 @@
 #include "singlefilefs.h"
 
 //this iterate function just returns 3 entries: . and .. and then the name of the unique file of the file system
+//è una funzione invocata ogni volta che viene richiesto il contenuto di una directory (vedi il comando ls).
+
+/*@param dir_context* ctx: struttura che mantiene lo stato dell'iterazione della directory.
+ * Il suo campo pos indica la posizione attuale nella directory.
+ */
 static int onefilefs_iterate(struct file *file, struct dir_context* ctx) {
 
-    //	printk("%s: we are inside readdir with ctx->pos set to %lld", MOD_NAME, ctx->pos);
+//	printk("%s: we are inside readdir with ctx->pos set to %lld", MOD_NAME, ctx->pos);
 	
 	if(ctx->pos >= (2 + 1)) return 0;//we cannot return more than . and .. and the unique file entry
 
 	if (ctx->pos == 0){
- //   		printk("%s: we are inside readdir with ctx->pos set to %lld", MOD_NAME, ctx->pos);
+//   	printk("%s: we are inside readdir with ctx->pos set to %lld", MOD_NAME, ctx->pos);
 		if(!dir_emit(ctx,".", FILENAME_MAXLEN, SINGLEFILEFS_ROOT_INODE_NUMBER, DT_UNKNOWN)){
 			return 0;
 		}
@@ -29,7 +34,7 @@ static int onefilefs_iterate(struct file *file, struct dir_context* ctx) {
 	}
 
 	if (ctx->pos == 1){
-  //  		printk("%s: we are inside readdir with ctx->pos set to %lld", MOD_NAME, ctx->pos);
+//  	printk("%s: we are inside readdir with ctx->pos set to %lld", MOD_NAME, ctx->pos);
 		//here the inode number does not care
 		if(!dir_emit(ctx,"..", FILENAME_MAXLEN, 1, DT_UNKNOWN)){
 			return 0;
@@ -40,7 +45,7 @@ static int onefilefs_iterate(struct file *file, struct dir_context* ctx) {
 	
 	}
 	if (ctx->pos == 2){
-   // 		printk("%s: we are inside readdir with ctx->pos set to %lld", MOD_NAME, ctx->pos);
+// 		printk("%s: we are inside readdir with ctx->pos set to %lld", MOD_NAME, ctx->pos);
 		if(!dir_emit(ctx, UNIQUE_FILE_NAME, FILENAME_MAXLEN, SINGLEFILEFS_FILE_INODE_NUMBER, DT_UNKNOWN)){
 			return 0;
 		}

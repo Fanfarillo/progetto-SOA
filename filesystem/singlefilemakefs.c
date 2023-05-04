@@ -25,13 +25,15 @@ int main(int argc, char *argv[])
 	struct onefilefs_inode file_inode;
 	struct onefilefs_dir_record record;
 	char *block_padding;
-	char *file_body = "Wathever content you would like.\n";//this is the default content of the unique file 
+	char *file_body = "Whatever content you would like.\n";//this is the default content of the unique file 
 
+	//il programma prende come argomento il dispositivo di destinazione in cui verrà creato il file system.
 	if (argc != 2) {
 		printf("Usage: mkfs-singlefilefs <device>\n");
 		return -1;
 	}
 
+	//apertura del dispositivo in modalità lettura+scrittura
 	fd = open(argv[1], O_RDWR);
 	if (fd == -1) {
 		perror("Error opening the device");
@@ -42,7 +44,7 @@ int main(int argc, char *argv[])
 	sb.version = 1;//file system version
 	sb.magic = MAGIC;
 	sb.block_size = DEFAULT_BLOCK_SIZE;
-
+	//scrittura del superblocco (block 0) del fils system, che comprende info come numero di versione, magic number e dimensione dei blocchi.
 	ret = write(fd, (char *)&sb, sizeof(sb));
 
 	if (ret != DEFAULT_BLOCK_SIZE) {
@@ -53,12 +55,13 @@ int main(int argc, char *argv[])
 
 	printf("Super block written succesfully\n");
 
-	// write file inode
+	//write file inode
 	file_inode.mode = S_IFREG;
 	file_inode.inode_no = SINGLEFILEFS_FILE_INODE_NUMBER;
 	file_inode.file_size = strlen(file_body);
 	printf("File size is %ld\n",file_inode.file_size);
 	fflush(stdout);
+	//scrittura dell'inode del file (block 1), che comprende info come il numero di inode, la dimensione del file e i permessi d'accesso.
 	ret = write(fd, (char *)&file_inode, sizeof(file_inode));
 
 	if (ret != sizeof(root_inode)) {
@@ -73,7 +76,7 @@ int main(int argc, char *argv[])
 	nbytes = DEFAULT_BLOCK_SIZE - sizeof(file_inode);
 	block_padding = malloc(nbytes);
 
-	ret = write(fd, block_padding, nbytes);
+	ret = write(fd, block_padding, nbytes);	//padding per l'inode del file
 
 	if (ret != nbytes) {
 		printf("The padding bytes are not written properly. Retry your mkfs\n");
@@ -84,6 +87,7 @@ int main(int argc, char *argv[])
 
 	//write file datablock
 	nbytes = strlen(file_body);
+	//scrittura del corpo del file (block 2+), dove file_body = "Whatever content you would like.\n"
 	ret = write(fd, file_body, nbytes);
 	if (ret != nbytes) {
 		printf("Writing file datablock has failed.\n");
@@ -92,7 +96,7 @@ int main(int argc, char *argv[])
 	}
 	printf("File datablock has been written succesfully.\n");
 
-	close(fd);
+	close(fd);	//chiusura del file descriptor (i.e. del dispositivo)
 
 	return 0;
 }
