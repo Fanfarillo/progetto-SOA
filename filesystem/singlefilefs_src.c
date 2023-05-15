@@ -10,6 +10,9 @@
 
 #include "singlefilefs.h"
 
+//direttamente aggiunti da me
+#include "singlefilemakefs.h"
+
 static struct super_operations singlefilefs_super_ops = {
 };
 
@@ -25,20 +28,38 @@ int singlefilefs_fill_super(struct super_block *sb, void *data, int silent) {
     struct timespec64 curr_time;
     uint64_t magic;
 
-    //unique identifier of the filesystem
+    //qui iniziano le variabili locali definite direttamente da me
+    struct onefilefs_inode *inode_disk;
+    int num_mounted_blocks;
+
+    //unique identifier of the file system
     sb->s_magic = MAGIC;
 
-    bh = sb_bread(sb, SB_BLOCK_NUMBER); //lettura del superblocco del filesystem
+    //lettura del superblocco del file ystem
+    bh = sb_bread(sb, SB_BLOCK_NUMBER);
     if(!sb){
-	return -EIO;
+	    return -EIO;    //-EIO = errore di input/output
     }
     sb_disk = (struct onefilefs_sb_info *)bh->b_data;
     magic = sb_disk->magic; //estrazione del magic number a partire dalle informazioni ottenute con sb_bread()
-    brelse(bh);
+    brelse(bh);             //rilascio del blocco bh (i.e. del superblocco del file system)
+
+    //lettura dell'inode dell'unico file del file system
+    bh = sb_bread(sb, SINGLEFILEFS_FILE_INODE_NUMBER);
+    if(!sb){
+        return -EIO;    //-EIO = errore di input/output
+    }
+    inode_disk = (struct onefilefs_inode *)bh->b_data;
+    num_mounted_blocks = (inode_disk->file_size)/DEFAULT_BLOCK_SIZE;
+    //check sul numero di blocchi effettivamente allocati, che non deve essere superiore a quello stabilito a tempo di compilazione (DATA_BLOCKS)
+    if (num_mounted_blocks > DATA_BLOCKS) {
+        brelse(bh); //rilascio del blocco bh (i.e. del blocco relatio all'inode dell'unico file del file system)
+        return -EINVAL; //-EINVAL = parametri non validi (in questo caso struct super_block *sb)
+    }
 
     //check on the expected magic number
     if(magic != sb->s_magic){
-	return -EBADF;
+	    return -EBADF;  //-EBADF = file descriptor non valido
     }
 
     sb->s_fs_info = NULL; //FS specific data (the magic number) already reported into the generic superblock
@@ -47,7 +68,7 @@ int singlefilefs_fill_super(struct super_block *sb, void *data, int silent) {
     //di seguito verrà allocato un inode per la root del file system
     root_inode = iget_locked(sb, 0);//get a root inode indexed with 0 from cache
     if (!root_inode){
-        return -ENOMEM;
+        return -ENOMEM; //-ENOMEM = errore di esaurimento della memoria
     }
 
     /* inizializzazione dell'inode con le informazioni necessarie, come:
@@ -75,7 +96,7 @@ int singlefilefs_fill_super(struct super_block *sb, void *data, int silent) {
     //sb->s_root = puntatore al root inode
     sb->s_root = d_make_root(root_inode);
     if (!sb->s_root)
-        return -ENOMEM;
+        return -ENOMEM; //-ENOMEM = errore di esaurimento della memoria
 
     sb->s_root->d_op = &singlefilefs_dentry_ops;//set our dentry operations
 

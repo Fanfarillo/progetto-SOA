@@ -21,6 +21,9 @@
 
 #define UNIQUE_FILE_NAME "the-file"
 
+//qui iniziano le define aggiunte direttamente da me
+#define METADATA_SIZE 4					//numero di byte che compongono i metadati di ciascun blocco
+
 //inode definition
 struct onefilefs_inode {
 	mode_t mode;//not exploited

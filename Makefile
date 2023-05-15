@@ -28,9 +28,8 @@ del-files:
 	rm .singlefilefs.mod.o.cmd .singlefilefs.o.cmd
 
 create-fs:
-# Necessario aggiungere il parametro $(DATA_BLOCKS) a ./singlefilemakefs image
 	dd bs=4096 count=$(TOT_BLOCKS) if=/dev/zero of=image
-	./filesystem/singlefilemakefs image
+	./filesystem/singlefilemakefs image $(DATA_BLOCKS)
 	mkdir ./mount
 	
 mount-fs:
