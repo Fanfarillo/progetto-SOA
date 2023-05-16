@@ -54,6 +54,11 @@ struct onefilefs_sb_info {
 	uint64_t total_data_blocks;
 };
 
+//qui iniziano le strutture aggiunte direttamente da me
+struct mount_info {
+	uint64_t is_mounted;
+};
+
 // file.c
 extern const struct inode_operations onefilefs_inode_ops;
 extern const struct file_operations onefilefs_file_operations; 

@@ -16,6 +16,9 @@ static struct super_operations singlefilefs_super_ops = {
 static struct dentry_operations singlefilefs_dentry_ops = {
 };
 
+//qui iniziano le variabili globali definite direttamente da me
+struct mount_info m_info = {0};
+
 //funzione che ha il compito di inizializzare il superblocco del filesystem "singlefilefs"
 int singlefilefs_fill_super(struct super_block *sb, void *data, int silent) {   
 
@@ -109,9 +112,20 @@ int singlefilefs_fill_super(struct super_block *sb, void *data, int silent) {
 //called on file system unmounting
 //funzione che ha il compito di eliminare il superblocco del filesystem
 static void singlefilefs_kill_superblock(struct super_block *s) {
+
+    //qui iniziano le variabili locali definite direttamente da me
+    long unsigned int cmp_swap_output;
+
+    cmp_swap_output = __sync_val_compare_and_swap(m_info.is_mounted, 1, 0);
+    if (cmp_swap_output != 1) { //caso in cui il file system non risultava montato
+        printk("%s: impossible to unmount the file system\n", MOD_NAME);
+        return;
+    }
+
     kill_block_super(s);    //è lei che esegue effettivamente l'eliminazione del superblocco, eliminando le risorse ad esso associate.
-    printk(KERN_INFO "%s: singlefilefs unmount succesful.\n",MOD_NAME);
+    printk(KERN_INFO "%s: singlefilefs unmount successful.\n",MOD_NAME);
     return;
+
 }
 
 //called on file system mounting
@@ -119,6 +133,15 @@ static void singlefilefs_kill_superblock(struct super_block *s) {
 struct dentry *singlefilefs_mount(struct file_system_type *fs_type, int flags, const char *dev_name, void *data) {
 
     struct dentry *ret;
+
+    //qui iniziano le variabili locali definite direttamente da me
+    long unsigned int cmp_swap_output;
+
+    cmp_swap_output = __sync_val_compare_and_swap(m_info.is_mounted, 0, 1);
+    if (cmp_swap_output != 0) { //caso in cui il file system era già montato
+        printk("%s: singlefilefs was already mounted\n", MOD_NAME);
+        return -EEXIST; //-EEXIST = file system già esistente
+    }
 
     /*@param fs_type: tipo di file system
      *@param flags: opzioni di montaggio
@@ -129,12 +152,13 @@ struct dentry *singlefilefs_mount(struct file_system_type *fs_type, int flags, c
      */
     ret = mount_bdev(fs_type, flags, dev_name, data, singlefilefs_fill_super);
 
-    if (unlikely(IS_ERR(ret)))
+    if (unlikely(IS_ERR(ret)))  //unlikely() è il duale di likely().
         printk("%s: error mounting onefilefs",MOD_NAME);
     else
-        printk("%s: singlefilefs is succesfully mounted on from device %s\n",MOD_NAME,dev_name);
+        printk("%s: singlefilefs is successfully mounted on from device %s\n",MOD_NAME,dev_name);
 
     return ret;
+
 }
 
 //file system type: describes file system structure

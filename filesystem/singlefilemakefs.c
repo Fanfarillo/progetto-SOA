@@ -92,7 +92,7 @@ int main(int argc, char *argv[])
 		close(fd);
 		return ret;
 	}
-	printf("Super block written succesfully\n");
+	printf("Super block written successfully\n");
 	fflush(stdout);
 
 	//padding for superblock
@@ -124,7 +124,7 @@ int main(int argc, char *argv[])
 		close(fd);
 		return -1;
 	}
-	printf("File inode written succesfully.\n");
+	printf("File inode written successfully.\n");
 	fflush(stdout);
 	
 	//padding for block 1
@@ -167,7 +167,7 @@ int main(int argc, char *argv[])
 				close(fd);
 				return -1;				
 			}
-			printf("Metadata of datablock %d written succesfully.\n", block_index);
+			printf("Metadata of datablock %d written successfully.\n", block_index);
 			fflush(stdout);
 			
 			//scrittura del payload (dati effettivi) del blocco
@@ -178,7 +178,7 @@ int main(int argc, char *argv[])
 				close(fd);
 				return -1;	
 			}
-			printf("Payload of datablock %d written succesfully.\n", block_index);
+			printf("Payload of datablock %d written successfully.\n", block_index);
 			fflush(stdout);
 
 			//padding per il blocco
