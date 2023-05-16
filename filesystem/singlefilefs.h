@@ -50,9 +50,8 @@ struct onefilefs_sb_info {
 	uint64_t block_size;
 	uint64_t inodes_count;//not exploited
 	uint64_t free_blocks;//not exploited
-
-	//padding to fit into a single block
-	char padding[ (4 * 1024) - (5 * sizeof(uint64_t))];
+	//qui iniziano i campi definiti da me
+	uint64_t total_data_blocks;
 };
 
 // file.c

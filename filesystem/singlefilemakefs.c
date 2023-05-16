@@ -9,9 +9,6 @@
 
 #include "singlefilefs.h"
 
-//direttamente aggiunti da me
-#include "singlefilemakefs.h"
-
 char *file_body[] = {	//this is the default content of the unique file
 	"Abbiamo lezione solo a sogene non mi va di spostarmi avanti e indietro anche se non mi piace andare a sogene\n",
 	"Forse non ci siamo capiti nell'audio di ieri\n",
@@ -29,7 +26,8 @@ char *file_body[] = {	//this is the default content of the unique file
 
 int main(int argc, char *argv[])
 {
-	int fd, nbytes;
+	int fd;
+	long unsigned int nbytes;
 	ssize_t ret;
 	struct onefilefs_sb_info sb;
 	struct onefilefs_inode root_inode;
@@ -77,17 +75,38 @@ int main(int argc, char *argv[])
 	sb.version = 1;//file system version
 	sb.magic = MAGIC;
 	sb.block_size = DEFAULT_BLOCK_SIZE;
-	//scrittura del superblocco (block 0) del fils system, che comprende info come numero di versione, magic number e dimensione dei blocchi.
+	sb.total_data_blocks = num_data_blocks;
+	//sanity check sulla dimensione della struct sb (superblock)
+	if (sizeof(sb)>DEFAULT_BLOCK_SIZE) {
+		printf("Size of superblock exceeds default block size.\n");
+		fflush(stdout);
+		close(fd);
+		return -1;
+	}
+	//scrittura del superblocco (block 0) del file system, che comprende info come numero di versione, magic number e dimensione dei blocchi.
 	ret = write(fd, (char *)&sb, sizeof(sb));
 
-	if (ret != DEFAULT_BLOCK_SIZE) {
-		printf("Bytes written [%d] are not equal to the default block size.\n", (int)ret);
+	if (ret != sizeof(sb)) {
+		printf("Bytes written [%d] are not equal to sb size.\n", (int)ret);
 		fflush(stdout);
 		close(fd);
 		return ret;
 	}
-
 	printf("Super block written succesfully\n");
+	fflush(stdout);
+
+	//padding for superblock
+	nbytes = DEFAULT_BLOCK_SIZE - sizeof(sb);
+	block_padding = malloc(nbytes);
+	ret = write(fd, block_padding, nbytes);	//padding per il superblocco
+
+	if (ret != nbytes) {
+		printf("The padding bytes are not written properly. Retry your mkfs\n");
+		fflush(stdout);
+		close(fd);
+		return -1;
+	}
+	printf("Padding in the superblock written sucessfully.\n");
 	fflush(stdout);
 
 	//write file inode
@@ -105,14 +124,12 @@ int main(int argc, char *argv[])
 		close(fd);
 		return -1;
 	}
-
 	printf("File inode written succesfully.\n");
 	fflush(stdout);
 	
 	//padding for block 1
 	nbytes = DEFAULT_BLOCK_SIZE - sizeof(file_inode);
 	block_padding = malloc(nbytes);
-
 	ret = write(fd, block_padding, nbytes);	//padding per l'inode del file
 
 	if (ret != nbytes) {
@@ -133,7 +150,7 @@ int main(int argc, char *argv[])
 		if (block_index < num_data_blocks_to_write) {
 			//sanity check sulla dimensione dei dati effettivi da scrivere sul blocco block_index (non deve superare la dimensione della parte del blocco riservata al payload)
 			if (strlen(file_body[block_index]) > DEFAULT_BLOCK_SIZE-METADATA_SIZE) {
-				printf("Size of payload for datablock %d exceeds limit");
+				printf("Size of payload for datablock %d exceeds limit.\n", block_index);
 				fflush(stdout);
 				close(fd);
 				return -1;

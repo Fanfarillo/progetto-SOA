@@ -10,9 +10,6 @@
 
 #include "singlefilefs.h"
 
-//direttamente aggiunti da me
-#include "singlefilemakefs.h"
-
 static struct super_operations singlefilefs_super_ops = {
 };
 
@@ -31,6 +28,7 @@ int singlefilefs_fill_super(struct super_block *sb, void *data, int silent) {
     //qui iniziano le variabili locali definite direttamente da me
     struct onefilefs_inode *inode_disk;
     int num_mounted_blocks;
+    int num_expected_blocks;
 
     //unique identifier of the file system
     sb->s_magic = MAGIC;
@@ -42,6 +40,7 @@ int singlefilefs_fill_super(struct super_block *sb, void *data, int silent) {
     }
     sb_disk = (struct onefilefs_sb_info *)bh->b_data;
     magic = sb_disk->magic; //estrazione del magic number a partire dalle informazioni ottenute con sb_bread()
+    num_expected_blocks = sb_disk->total_data_blocks;   //estrazione del numero massimo di blocchi che è stato imposto a tempo di compilazione (DATA_BLOCKS)
     brelse(bh);             //rilascio del blocco bh (i.e. del superblocco del file system)
 
     //lettura dell'inode dell'unico file del file system
@@ -51,8 +50,9 @@ int singlefilefs_fill_super(struct super_block *sb, void *data, int silent) {
     }
     inode_disk = (struct onefilefs_inode *)bh->b_data;
     num_mounted_blocks = (inode_disk->file_size)/DEFAULT_BLOCK_SIZE;
+
     //check sul numero di blocchi effettivamente allocati, che non deve essere superiore a quello stabilito a tempo di compilazione (DATA_BLOCKS)
-    if (num_mounted_blocks > DATA_BLOCKS) {
+    if (num_mounted_blocks > num_expected_blocks) {
         brelse(bh); //rilascio del blocco bh (i.e. del blocco relatio all'inode dell'unico file del file system)
         return -EINVAL; //-EINVAL = parametri non validi (in questo caso struct super_block *sb)
     }
