@@ -43,5 +43,5 @@ module_init(singlefilefs_init);
 module_exit(singlefilefs_exit);
 
 MODULE_LICENSE("GPL");
-MODULE_AUTHOR("Matteo Fanfarillo <matteo.fanfarillo@gmail.com>");
+MODULE_AUTHOR("Francesco Quaglia <francesco.quaglia@uniroma2.it>, Matteo Fanfarillo <matteo.fanfarillo99@gmail.com>");
 MODULE_DESCRIPTION("SINGLE-FILE-FS");
