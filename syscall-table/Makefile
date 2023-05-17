@@ -2,7 +2,6 @@ obj-m += the_usctm.o
 the_usctm-objs += lib/vtpmo.o
 
 all:
-	gcc user/user.c -o user/user.o
 	make -C /lib/modules/$(shell uname -r)/build M=$(PWD) modules
 
 clean:
@@ -16,7 +15,6 @@ del-files:
 	rm -fv ./*.symvers
 	rm -fv ./*.order
 	rm -fv ./lib/*.o
-	rm -fv ./user/*.o
 	rm .Module.symvers.cmd .modules.order.cmd
 	rm .the_usctm.ko.cmd .the_usctm.mod.cmd .the_usctm.mod.o.cmd .the_usctm.o.cmd
 

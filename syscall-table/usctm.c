@@ -40,7 +40,7 @@
 #include <asm/cacheflush.h>
 #include <asm/apic.h>
 #include <linux/syscalls.h>
-#include "./include/vtpmo.h"
+#include "lib/include/vtpmo.h"
 
 
 MODULE_LICENSE("GPL");

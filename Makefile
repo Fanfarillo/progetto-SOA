@@ -1,6 +1,7 @@
 obj-m += singlefilefs.o
 singlefilefs-objs += initAndExit.o filesystem/file.o filesystem/dir.o
 
+A = $(shell cat /sys/module/the_usctm/parameters/sys_call_table_address)
 override DATA_BLOCKS = 10
 TOT_BLOCKS = $(shell expr $(DATA_BLOCKS) + 2)
 override MOUNT_DIR = ./mount/
@@ -40,12 +41,12 @@ unmount-fs:
 	rmdir $(MOUNT_DIR)
 
 insmod:
-	insmod singlefilefs.ko
+	insmod singlefilefs.ko the_syscall_table=$(A)
 
 rmmod:
 	rmmod singlefilefs
 
-# USAGE:
+# USAGE (NB - il modulo relativo alla discovery della system call table deve essere già montato):
 # make
 # sudo make insmod
 # sudo make create-fs
