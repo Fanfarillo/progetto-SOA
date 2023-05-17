@@ -116,7 +116,7 @@ static void singlefilefs_kill_superblock(struct super_block *s) {
     //qui iniziano le variabili locali definite direttamente da me
     long unsigned int cmp_swap_output;
 
-    cmp_swap_output = __sync_val_compare_and_swap(m_info.is_mounted, 1, 0);
+    cmp_swap_output = __sync_val_compare_and_swap(&(m_info.is_mounted), 1, 0);
     if (cmp_swap_output != 1) { //caso in cui il file system non risultava montato
         printk("%s: impossible to unmount the file system\n", MOD_NAME);
         return;
@@ -137,10 +137,10 @@ struct dentry *singlefilefs_mount(struct file_system_type *fs_type, int flags, c
     //qui iniziano le variabili locali definite direttamente da me
     long unsigned int cmp_swap_output;
 
-    cmp_swap_output = __sync_val_compare_and_swap(m_info.is_mounted, 0, 1);
+    cmp_swap_output = __sync_val_compare_and_swap(&(m_info.is_mounted), 0, 1);
     if (cmp_swap_output != 0) { //caso in cui il file system era già montato
         printk("%s: singlefilefs was already mounted\n", MOD_NAME);
-        return -EEXIST; //-EEXIST = file system già esistente
+        return ERR_PTR(-EEXIST);    //-EEXIST = file system già esistente; uso ERR_PTR perché devo restituire un valore di tipo pointer.
     }
 
     /*@param fs_type: tipo di file system
