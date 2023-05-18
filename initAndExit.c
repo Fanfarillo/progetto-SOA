@@ -1,16 +1,15 @@
 #include <linux/init.h>
 #include <linux/module.h>
-#include <linux/fs.h>
 #include <linux/timekeeping.h>
 #include <linux/time.h>
 #include <linux/buffer_head.h>
-#include <linux/types.h>
 #include <linux/slab.h>
 #include <linux/string.h>
+#include <linux/version.h>
 
 #include "lib/include/scth.h"
-#include "devFunctions.c"
 #include "filesystem/singlefilefs_src.c"
+#include "devFunctions.c"
 
 //variabile in cui verrà memorizzato l'indirizzo in cui è posta la syscall table (tale indirizzo è passato come parametro al presente modulo)
 unsigned long the_syscall_table = 0x0;
@@ -18,7 +17,7 @@ module_param(the_syscall_table, ulong, 0660);
 
 unsigned long the_ni_syscall;
 unsigned long new_syscall_array[] = {0x0, 0x0, 0x0};
-#define HACKED_ENTRIES (int)(sizeof(new_syscall_array)/sizeof(unsigned long));
+#define HACKED_ENTRIES (int)(sizeof(new_syscall_array)/sizeof(unsigned long))
 int restore[HACKED_ENTRIES] = {[0 ... (HACKED_ENTRIES-1)]-1};
 
 //funzione che registra il file system "singlefilefs" nel kernel Linux.

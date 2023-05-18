@@ -88,7 +88,7 @@ void unprotect_memory(void){
 
 
 
-int get_entries(int * entry_ids, int num_acquires, unsigned long sys_call_table, unsigned long *sys_ni_sys_call) {
+int get_entries(int * entry_ids, int num_acquires, unsigned long *sys_call_table, unsigned long *sys_ni_sys_call) {
 
         unsigned long * p;
         unsigned long addr;

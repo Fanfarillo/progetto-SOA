@@ -168,3 +168,4 @@ static struct file_system_type onefilefs_type = {
     .mount      = singlefilefs_mount,           //funzione da chiamare quando si vuole montare il file system
     .kill_sb    = singlefilefs_kill_superblock, //funzione da chiamare quando si vuole eliminare un superblocco associato al filesystem
 };
+
