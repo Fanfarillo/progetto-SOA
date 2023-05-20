@@ -7,6 +7,7 @@
 #include <linux/types.h>
 #include <linux/slab.h>
 #include <linux/string.h>
+#include <linux/version.h>
 
 #include "singlefilefs.h"
 
@@ -89,7 +90,11 @@ struct dentry *onefilefs_lookup(struct inode *parent_inode, struct dentry *child
 
 	    //this work is done if the inode was not already cached
         //in pratica qui viene definito l'inode impostando i permessi d'accesso, le file operation e le inode operation.
-	    inode_init_owner(&init_user_ns, the_inode, NULL, S_IFREG );
+        #if LINUX_VERSION_CODE >= KERNEL_VERSION(5,12,0)
+            inode_init_owner(&init_user_ns, the_inode, NULL, S_IFREG);
+        #else
+            inode_init_owner(the_inode, NULL, S_IFREG);
+        #endif
 	    the_inode->i_mode = S_IFREG | S_IRUSR | S_IRGRP | S_IROTH | S_IWUSR | S_IWGRP | S_IXUSR | S_IXGRP | S_IXOTH;
         the_inode->i_fop = &onefilefs_file_operations;
 	    the_inode->i_op = &onefilefs_inode_ops;
