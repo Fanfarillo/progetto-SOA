@@ -5,23 +5,26 @@
 #include <linux/module.h>
 #include <linux/slab.h>
 #include <linux/string.h>
+#include <linux/version.h>
 
 #include "filesystem/singlefilefs.h"
 #include "devFunctions.h"
 
 //UTILS FUNCTIONS PROTOTYPES
-struct onefilefs_sb_info *get_superblock_info();
+struct onefilefs_sb_info *get_superblock_info(void);
 
 //questa funzione restituisce la struttura dati che comprende le informazioni contenute nel superblocco del dispositivo.
 struct onefilefs_sb_info *get_superblock_info() {
 
     int fd;                         //file descriptor da utilizzare per il nostro dispositivo ("image")
     struct file *f;                 //struttura che descrive il nostro dispositivo
+    loff_t start_offset;             //valore (offset) che indica il punto del dispositivo da cui deve iniziare la lettura
+    loff_t *pos;                    //puntatore che indica il punto del dispositivo da cui deve iniziare la lettura
     ssize_t ret;                    //valore di ritorno della funzione vfs_read()
     char *buffer;                   //buffer che verrà popolato dalla funzione vfs_read()
     struct onefilefs_sb_info *sb;   //struttura dati che comprende le informazioni contenute nel superblocco
 
-    fd = get_unused_fd_flags(0)             //ottenimento di un file descriptor disponibile
+    fd = get_unused_fd_flags(0);             //ottenimento di un file descriptor disponibile
     if (fd < 0)
         return NULL;
 
@@ -31,18 +34,27 @@ struct onefilefs_sb_info *get_superblock_info() {
 
     buffer = kmalloc(DEFAULT_BLOCK_SIZE, GFP_KERNEL);   //allocazione della memoria di livello kernel per buffer
     if (!buffer) {
-        filp_close(f, FL_CLOSE);
+        filp_close(f, NULL);
         return NULL;
     }
     sb = kmalloc(DEFAULT_BLOCK_SIZE, GFP_KERNEL); //allocazione della memoria di livello kernel per sb
     if (!sb) {
-        filp_close(f, FL_CLOSE);
+        filp_close(f, NULL);
         kfree(buffer);
         return NULL;
     }
-    ret = vfs_read(f, buffer, DEFAULT_BLOCK_SIZE, 0);   //lettura del superblocco del nostro dispositivo
+
+    start_offset = 0;    //dovendo leggere il superblocco, mi pongo all'inizio del file che descrive il dispositivo (i.e. offset = 0).
+    pos = &start_offset;
+
+    #if LINUX_VERSION_CODE >= KERNEL_VERSION(4,14,0)
+    ret = kernel_read(f, buffer, DEFAULT_BLOCK_SIZE, pos);   //lettura del superblocco del nostro dispositivo
+    #else
+    ret = vfs_read(f, buffer, DEFAULT_BLOCK_SIZE, pos);
+    #endif
+
     if (ret < 0) {
-        filp_close(f, FL_CLOSE);
+        filp_close(f, NULL);
         kfree(buffer);
         kfree(sb);
         return NULL;
@@ -51,7 +63,7 @@ struct onefilefs_sb_info *get_superblock_info() {
     memcpy(sb, buffer, DEFAULT_BLOCK_SIZE);
 
     //clean up
-    filp_close(f, FL_CLOSE);
+    filp_close(f, NULL);
     kfree(buffer);
 
     return sb;
