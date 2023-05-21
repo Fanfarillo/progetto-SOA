@@ -1,9 +1,8 @@
 #ifndef _ONEFILEFS_H
 #define _ONEFILEFS_H
 
-#include <linux/types.h>
 #include <linux/fs.h>
-
+#include <linux/types.h>
 
 #define MOD_NAME "SINGLE FILE FS"		//nome del modulo
 
@@ -12,7 +11,7 @@
 #define SB_BLOCK_NUMBER 0				//numero di blocco del superblock
 #define DEFAULT_FILE_INODE_BLOCK 1
 
-#define FILENAME_MAXLEN 255				//lunghezza masssima del nome di un file
+#define FILENAME_MAXLEN 255				//lunghezza massima del nome di un file
 
 #define SINGLEFILEFS_ROOT_INODE_NUMBER 10	//numero di inode utilizzato dalla root del filesystem
 #define SINGLEFILEFS_FILE_INODE_NUMBER 1	//numero di inode utilizzato dai file del filesystem
