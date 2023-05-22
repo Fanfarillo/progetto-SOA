@@ -113,7 +113,17 @@ static ssize_t dev_read(struct file *, char *, size_t, loff_t *);
 static int dev_open(struct inode *, struct file *);
 static int dev_release(struct inode *, struct file *);
 
-static ssize_t dev_read(struct file *filp, char *buff, size_t len, loff_t *off) {
+//la dev_read() legge i dati dal blocco del dispositivo corrispondente alla posizione indicata dall'offset off.
+static ssize_t dev_read(struct file *filp, char *buf, size_t len, loff_t *off) {
+
+    struct buffer_head *bh = NULL;
+    struct inode * the_inode = filp->f_inode;
+    uint64_t file_size = the_inode->i_size;
+    int ret;
+    loff_t offset;
+    int block_to_read;//index of the block to be read from device
+
+    printk("%s: read operation called with len %ld - and offset %lld (the current file size is %lld)",MOD_NAME, len, *off, file_size);
 
     //sanity checks
     if (!m_info.is_mounted) {
@@ -121,11 +131,45 @@ static ssize_t dev_read(struct file *filp, char *buff, size_t len, loff_t *off) 
         return -ENODEV; //-ENODEV = file system non esistente
     }
 
+    //QUI INIZIA IL CODICE FORNITO DAL PROFESSORE
+
+    //this operation is not synchronized 
+    //param *off can be changed concurrently 
+    //add synchronization if you need it for any reason
+
+    //check that *off is within boundaries of file size
+    if (*off >= file_size)
+        return 0;
+    else if (*off + len > file_size)
+        len = file_size - *off;
+
+    //determine the block level offset for the operation
+    offset = *off % DEFAULT_BLOCK_SIZE; 
+    //just read stuff in a single block - residuals will be managed at the applicatin level
+    if (offset + len > DEFAULT_BLOCK_SIZE)
+        len = DEFAULT_BLOCK_SIZE - offset;
+
+    //compute the actual index of the the block to be read from device
+    block_to_read = *off / DEFAULT_BLOCK_SIZE + 2; //the value 2 accounts for superblock and file-inode on device (block 0 & block 1)
+    
+    printk("%s: read operation must access block %d of the device",MOD_NAME, block_to_read);
+
+    //sb_read acquisisce il contenuto del blocco da leggere (quello di cui abbiamo appena calcolato l'indice).
+    bh = (struct buffer_head *)sb_bread(filp->f_path.dentry->d_inode->i_sb, block_to_read);
+    if(!bh){
+	    return -EIO;
+    }
+    //ora si copiano i dati dal buffer del kernel (bh->b_data+offset) al buffer dell'applicazione (buf), passato come parametro a onefilefs_read().
+    ret = copy_to_user(buf,bh->b_data + offset, len);
+    *off += (len - ret);
+    brelse(bh);
+
     printk("%s: device successfully read\n", MOD_NAME);
-  	return 0;
+    return len - ret;   //return: numero di byte effettivamente letti e copiati
 
 }
 
+//la dev_open() apre il dispositivo (deve farlo in modalità di sola scrittura).
 static int dev_open(struct inode *inode, struct file *file) {
 
     //sanity checks
@@ -133,8 +177,8 @@ static int dev_open(struct inode *inode, struct file *file) {
         printk("%s: impossibile aprire il dispositivo: il file system non è stato montato\n", MOD_NAME);
         return -ENODEV; //-ENODEV = file system non esistente
     }
-    if ((file->f_mode & FMODE_WRITE) || (file->f_mode & FMODE_APPEND)) {    //il dispositivo deve essere aperto in read only
-        printk("%s: impossibile aprire il dispositivo in modalità scrittura o append\n", MOD_NAME);
+    if (file->f_mode & FMODE_WRITE) {    //il dispositivo deve essere aperto in read only
+        printk("%s: impossibile aprire il dispositivo in modalità scrittura\n", MOD_NAME);
         return -EPERM;  //-EPERM = operazione non consentita
     }
 
@@ -143,6 +187,7 @@ static int dev_open(struct inode *inode, struct file *file) {
 
 }
 
+//la dev_release() chiude il dispositivo.
 static int dev_release(struct inode *inode, struct file *file) {
 
     //sanity checks
@@ -156,7 +201,7 @@ static int dev_release(struct inode *inode, struct file *file) {
 
 }
 
-static struct file_operations fops = {
+const struct file_operations fops = {
   .owner = THIS_MODULE,
   .read = dev_read,
   .open = dev_open,

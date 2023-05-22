@@ -60,7 +60,7 @@ struct mount_info {
 
 // file.c
 extern const struct inode_operations onefilefs_inode_ops;
-extern const struct file_operations onefilefs_file_operations; 
+extern const struct file_operations fops;
 
 // dir.c
 extern const struct file_operations onefilefs_dir_operations;

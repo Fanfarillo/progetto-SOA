@@ -10,54 +10,7 @@
 #include <linux/version.h>
 
 #include "singlefilefs.h"
-
-//è una callback della struttura onefilefs_file_operations (di tipo struct file_operations).
-//in particolare, legge i dati dal blocco del file system corrispondente alla posizione indicata dall'offset off.
-ssize_t onefilefs_read(struct file * filp, char __user * buf, size_t len, loff_t * off) {
-
-    struct buffer_head *bh = NULL;
-    struct inode * the_inode = filp->f_inode;
-    uint64_t file_size = the_inode->i_size;
-    int ret;
-    loff_t offset;
-    int block_to_read;//index of the block to be read from device
-
-    printk("%s: read operation called with len %ld - and offset %lld (the current file size is %lld)",MOD_NAME, len, *off, file_size);
-
-    //this operation is not synchronized 
-    //param *off can be changed concurrently 
-    //add synchronization if you need it for any reason
-
-    //check that *off is within boundaries of file size
-    if (*off >= file_size)
-        return 0;
-    else if (*off + len > file_size)
-        len = file_size - *off;
-
-    //determine the block level offset for the operation
-    offset = *off % DEFAULT_BLOCK_SIZE; 
-    //just read stuff in a single block - residuals will be managed at the applicatin level
-    if (offset + len > DEFAULT_BLOCK_SIZE)
-        len = DEFAULT_BLOCK_SIZE - offset;
-
-    //compute the actual index of the the block to be read from device
-    block_to_read = *off / DEFAULT_BLOCK_SIZE + 2; //the value 2 accounts for superblock and file-inode on device (block 0 & block 1)
-    
-    printk("%s: read operation must access block %d of the device",MOD_NAME, block_to_read);
-
-    //sb_read acquisisce il contenuto del blocco da leggere (quello di cui abbiamo appena calcolato l'indice).
-    bh = (struct buffer_head *)sb_bread(filp->f_path.dentry->d_inode->i_sb, block_to_read);
-    if(!bh){
-	    return -EIO;
-    }
-    //ora si copiano i dati dal buffer del kernel (bh->b_data+offset) al buffer dell'applicazione (buf), passato come parametro a onefilefs_read().
-    ret = copy_to_user(buf,bh->b_data + offset, len);
-    *off += (len - ret);
-    brelse(bh);
-
-    return len - ret;   //return: numero di byte effettivamente letti e copiati
-
-}
+//#include "../devFunctions.h"
 
 //è una callback della struttura onefilefs_inode_ops (di tipo struct inode_operations).
 //viene invocata quando il kernel cerca di accedere a un file / directory nel file system montato.
@@ -96,7 +49,7 @@ struct dentry *onefilefs_lookup(struct inode *parent_inode, struct dentry *child
             inode_init_owner(the_inode, NULL, S_IFREG);
         #endif
 	    the_inode->i_mode = S_IFREG | S_IRUSR | S_IRGRP | S_IROTH | S_IWUSR | S_IWGRP | S_IXUSR | S_IXGRP | S_IXOTH;
-        the_inode->i_fop = &onefilefs_file_operations;
+        the_inode->i_fop = &fops;
 	    the_inode->i_op = &onefilefs_inode_ops;
 
 	    //just one link for this file
@@ -129,10 +82,4 @@ struct dentry *onefilefs_lookup(struct inode *parent_inode, struct dentry *child
 //look up goes in the inode operations
 const struct inode_operations onefilefs_inode_ops = {
     .lookup = onefilefs_lookup,
-};
-
-const struct file_operations onefilefs_file_operations = {
-    .owner = THIS_MODULE,
-    .read = onefilefs_read,
-    //.write = onefilefs_write //please implement this function to complete the exercise
 };
