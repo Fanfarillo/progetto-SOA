@@ -109,4 +109,56 @@ long sys_invalidate_data = (unsigned long) __x64_sys_invalidate_data;
 #endif
 
 //FILE OPERATIONS
-//TODO
+static ssize_t dev_read(struct file *, char *, size_t, loff_t *);
+static int dev_open(struct inode *, struct file *);
+static int dev_release(struct inode *, struct file *);
+
+static ssize_t dev_read(struct file *filp, char *buff, size_t len, loff_t *off) {
+
+    //sanity checks
+    if (!m_info.is_mounted) {
+        printk("%s: impossibile leggere il dispositivo: il file system non è stato montato\n", MOD_NAME);
+        return -ENODEV; //-ENODEV = file system non esistente
+    }
+
+    printk("%s: device successfully read\n", MOD_NAME);
+  	return 0;
+
+}
+
+static int dev_open(struct inode *inode, struct file *file) {
+
+    //sanity checks
+    if (!m_info.is_mounted) {
+        printk("%s: impossibile aprire il dispositivo: il file system non è stato montato\n", MOD_NAME);
+        return -ENODEV; //-ENODEV = file system non esistente
+    }
+    if ((file->f_mode & FMODE_WRITE) || (file->f_mode & FMODE_APPEND)) {    //il dispositivo deve essere aperto in read only
+        printk("%s: impossibile aprire il dispositivo in modalità scrittura o append\n", MOD_NAME);
+        return -EPERM;  //-EPERM = operazione non consentita
+    }
+
+    printk("%s: device successfully opened\n", MOD_NAME);
+  	return 0;
+
+}
+
+static int dev_release(struct inode *inode, struct file *file) {
+
+    //sanity checks
+    if (!m_info.is_mounted) {
+        printk("%s: impossibile chiudere il dispositivo: il file system non è stato montato\n", MOD_NAME);
+        return -ENODEV; //-ENODEV = file system non esistente
+    }
+
+    printk("%s: device successfully closed\n", MOD_NAME);
+  	return 0;
+
+}
+
+static struct file_operations fops = {
+  .owner = THIS_MODULE,
+  .read = dev_read,
+  .open = dev_open,
+  .release = dev_release,
+};

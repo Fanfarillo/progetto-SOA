@@ -18,7 +18,7 @@ struct onefilefs_sb_info *get_superblock_info() {
 
     int fd;                         //file descriptor da utilizzare per il nostro dispositivo ("image")
     struct file *f;                 //struttura che descrive il nostro dispositivo
-    loff_t start_offset;             //valore (offset) che indica il punto del dispositivo da cui deve iniziare la lettura
+    loff_t start_offset;            //valore (offset) che indica il punto del dispositivo da cui deve iniziare la lettura
     loff_t *pos;                    //puntatore che indica il punto del dispositivo da cui deve iniziare la lettura
     ssize_t ret;                    //valore di ritorno della funzione vfs_read()
     char *buffer;                   //buffer che verrà popolato dalla funzione vfs_read()
