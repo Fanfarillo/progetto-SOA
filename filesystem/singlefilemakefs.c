@@ -36,6 +36,7 @@ int main(int argc, char *argv[])
 	char *block_padding;
 
 	//qui iniziano le variabili locali definite direttamente da me
+	int i;	//per i cicli for
 	char *block_metadata;
 	int num_data_blocks;
 	int num_data_blocks_to_write;
@@ -75,18 +76,18 @@ int main(int argc, char *argv[])
 	sb.version = 1;//file system version
 	sb.magic = MAGIC;
 	sb.block_size = DEFAULT_BLOCK_SIZE;
-	sb.total_data_blocks = num_data_blocks;
-	//sanity check sulla dimensione della struct sb (superblock)
-	if (sizeof(sb)>DEFAULT_BLOCK_SIZE) {
+	sb.total_data_blocks = num_data_blocks;	
+	//sanity check sulla dimensione della struct sb (superblock); qui si tiene conto anche del campo list_head perché verrà aggiunto nel superblocco successivamente (in singlefilefs_src.c).
+	if (SUPERBLOCK_STRUCT_SIZE > DEFAULT_BLOCK_SIZE) {
 		printf("Size of superblock exceeds default block size.\n");
 		fflush(stdout);
 		close(fd);
 		return -1;
 	}
 	//scrittura del superblocco (block 0) del file system, che comprende info come numero di versione, magic number e dimensione dei blocchi.
-	ret = write(fd, (char *)&sb, sizeof(sb));
+	ret = write(fd, (char *)&sb, SUPERBLOCK_STRUCT_SIZE);
 
-	if (ret != sizeof(sb)) {
+	if (ret != SUPERBLOCK_STRUCT_SIZE) {
 		printf("Bytes written [%d] are not equal to sb size.\n", (int)ret);
 		fflush(stdout);
 		close(fd);
@@ -96,7 +97,7 @@ int main(int argc, char *argv[])
 	fflush(stdout);
 
 	//padding for superblock
-	nbytes = DEFAULT_BLOCK_SIZE - sizeof(sb);
+	nbytes = DEFAULT_BLOCK_SIZE - SUPERBLOCK_STRUCT_SIZE;
 	block_padding = malloc(nbytes);
 	ret = write(fd, block_padding, nbytes);	//padding per il superblocco
 

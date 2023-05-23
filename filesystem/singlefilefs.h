@@ -2,6 +2,7 @@
 #define _ONEFILEFS_H
 
 #include <linux/fs.h>
+#include <linux/rculist.h>
 #include <linux/types.h>
 
 #define MOD_NAME "SINGLE FILE FS"		//nome del modulo
@@ -22,13 +23,12 @@
 
 //qui iniziano le define aggiunte direttamente da me
 #define METADATA_SIZE 4					//numero di byte che compongono i metadati di ciascun blocco
+#define SUPERBLOCK_STRUCT_SIZE (4*sizeof(uint64_t) + sizeof(struct list_head))	//numero di byte occupati da struct onefilefs_sb_info
 
 //inode definition
 struct onefilefs_inode {
-	mode_t mode;//not exploited
+	mode_t mode;
 	uint64_t inode_no;
-	uint64_t data_block_number;//not exploited
-
 	union {
 		uint64_t file_size;
 		uint64_t dir_children_count;
@@ -41,16 +41,14 @@ struct onefilefs_dir_record {
 	uint64_t inode_no;
 };
 
-
 //superblock definition
 struct onefilefs_sb_info {
 	uint64_t version;
 	uint64_t magic;
 	uint64_t block_size;
-	uint64_t inodes_count;//not exploited
-	uint64_t free_blocks;//not exploited
 	//qui iniziano i campi definiti da me
 	uint64_t total_data_blocks;
+	struct list_head rcu_head;
 };
 
 //qui iniziano le strutture aggiunte direttamente da me

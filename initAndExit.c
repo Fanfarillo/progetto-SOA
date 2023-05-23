@@ -23,7 +23,7 @@ int restore[HACKED_ENTRIES] = {[0 ... (HACKED_ENTRIES-1)]-1};
 //funzione che registra il file system "singlefilefs" nel kernel Linux.
 static int singlefilefs_init(void) {
 
-    int ret;
+    int ret, i;
 
     printk("%s: usleep example received sys_call_table address %px\n",MOD_NAME,(void*)the_syscall_table);
     printk("%s: initializing - hacked entries %d\n",MOD_NAME,HACKED_ENTRIES);
@@ -40,7 +40,7 @@ static int singlefilefs_init(void) {
     }
 
     unprotect_memory();
-    for(int i=0; i<HACKED_ENTRIES; i++) {
+    for(i=0; i<HACKED_ENTRIES; i++) {
         ((unsigned long *)the_syscall_table)[restore[i]] = (unsigned long)new_syscall_array[i];
     }
     protect_memory();
@@ -60,11 +60,11 @@ static int singlefilefs_init(void) {
 //funzione che deregistra il file system "singlefilefs" precedentemente registrato con singlefilefs_init().
 static void singlefilefs_exit(void) {
 
-    int ret;
+    int ret, i;
 
     printk("%s: shutting down\n", MOD_NAME);
     unprotect_memory();
-    for(int i=0; i<HACKED_ENTRIES; i++) {
+    for(i=0; i<HACKED_ENTRIES; i++) {
         ((unsigned long *)the_syscall_table)[restore[i]] = the_ni_syscall;
     }
     protect_memory();

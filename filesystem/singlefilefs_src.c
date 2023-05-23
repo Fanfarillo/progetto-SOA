@@ -2,6 +2,7 @@
 #include <linux/fs.h>
 #include <linux/init.h>
 #include <linux/module.h>
+#include <linux/rculist.h>
 #include <linux/slab.h>
 #include <linux/string.h>
 #include <linux/time.h>
@@ -29,6 +30,7 @@ int singlefilefs_fill_super(struct super_block *sb, void *data, int silent) {
     uint64_t magic;
 
     //qui iniziano le variabili locali definite direttamente da me
+    struct list_head *head; //puntatore al campo list_head da aggiungere al superblocco
     struct onefilefs_inode *inode_disk;
     int num_mounted_blocks;
     int num_expected_blocks;
@@ -38,17 +40,32 @@ int singlefilefs_fill_super(struct super_block *sb, void *data, int silent) {
 
     //lettura del superblocco del file ystem
     bh = sb_bread(sb, SB_BLOCK_NUMBER);
-    if(!sb){
+    if (!sb){
 	    return -EIO;    //-EIO = errore di input/output
     }
     sb_disk = (struct onefilefs_sb_info *)bh->b_data;
     magic = sb_disk->magic; //estrazione del magic number a partire dalle informazioni ottenute con sb_bread()
     num_expected_blocks = sb_disk->total_data_blocks;   //estrazione del numero massimo di blocchi che è stato imposto a tempo di compilazione (DATA_BLOCKS)
+
+    /* Inizializzazione (all'interno del superblocco) del campo di tipo struct list_head che punta, mediante puntatori next e prev, rispettivamente al primo e
+     * all'ultimo elemento della RCU list. Tale lista doppiamente collegata rappresenta tutti quanti i blocchi del file e comprende anche il superblocco e l'inode
+     * del file. Viene inoltre utilizzata come supporto per eseguire in modo agevole gli accessi in maniera sincronizzata (appunto mediante un approccio RCU).
+     */
+    head = kmalloc(sizeof(struct list_head) ,GFP_KERNEL);
+    if (!head) {
+        return -ENOMEM; //-ENOMEM = errore di esaurimento della memoria
+    }
+    //inizializzazione della RCU a partire dalla list_head dell'elemento 'fantoccio', che è l'elemento che punta al primo e all'ultimo elemento vero e proprio della lista
+    INIT_LIST_HEAD_RCU(head);
+    sb_disk->rcu_head = *head;  //inizializzazione del campo di tipo list_head della struct che descrive il superblocco (struct onefilefs_sb_info *sb_disk)
+
+    //TODO: popolare tutta quanta la lista collegata magari con una funzione ausiliaria
+
     brelse(bh);             //rilascio del blocco bh (i.e. del superblocco del file system)
 
     //lettura dell'inode dell'unico file del file system
     bh = sb_bread(sb, SINGLEFILEFS_FILE_INODE_NUMBER);
-    if(!sb){
+    if (!sb){
         return -EIO;    //-EIO = errore di input/output
     }
     inode_disk = (struct onefilefs_inode *)bh->b_data;
@@ -61,7 +78,7 @@ int singlefilefs_fill_super(struct super_block *sb, void *data, int silent) {
     }
 
     //check on the expected magic number
-    if(magic != sb->s_magic){
+    if (magic != sb->s_magic){
 	    return -EBADF;  //-EBADF = file descriptor non valido
     }
 
