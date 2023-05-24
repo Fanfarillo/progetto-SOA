@@ -10,6 +10,8 @@
 #include <linux/types.h>
 
 #include "singlefilefs.h"
+#include "singlefilefs_ker.h"
+#include "singlefilefs_init.h"
 
 static struct super_operations singlefilefs_super_ops = {
 };
@@ -30,6 +32,7 @@ int populate_rcu_list(struct list_head *head, int num_data_blocks) {
     int num_written_data_blocks;
     struct rcu_node *node;
     struct list_head *prev; //puntatore alla list_head dell'elemento a cui bisognerà collegare quello nuovo (chiaramente da aggiornare a ogni iterazione del for)
+    extern char *file_body[];
 
     //calcolo del numero di blocchi che sono stati inizializzati in fase di creazione del file system; questo permette di stabilire quanti nodi dovranno avere i metadati inizializzati.
     num_written_data_blocks = sizeof(file_body)/sizeof(file_body[0]); //funziona perché stiamo dividendo la dimensione di un array di puntatori per la dimensione di un puntatore.

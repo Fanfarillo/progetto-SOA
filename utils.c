@@ -8,6 +8,7 @@
 #include <linux/version.h>
 
 #include "filesystem/singlefilefs.h"
+#include "filesystem/singlefilefs_ker.h"
 #include "devFunctions.h"
 
 //UTILS FUNCTIONS PROTOTYPES

@@ -8,6 +8,7 @@
 #include <unistd.h>
 
 #include "singlefilefs.h"
+#include "singlefilefs_init.h"
 
 /*
 	This makefs will write the following information onto the disk
@@ -21,7 +22,7 @@ int main(int argc, char *argv[])
 	int fd;
 	long unsigned int nbytes;
 	ssize_t ret;
-	struct onefilefs_sb_info sb;
+	struct onefilefs_sb_incomplete_info sb;
 	struct onefilefs_inode root_inode;
 	struct onefilefs_inode file_inode;
 	struct onefilefs_dir_record record;
@@ -80,7 +81,7 @@ int main(int argc, char *argv[])
 		return -1;
 	}
 	//scrittura del superblocco (block 0) del file system, che comprende info come numero di versione, magic number e dimensione dei blocchi.
-	ret = write(fd, (char *)&sb, SUPERBLOCK_STRUCT_SIZE);
+	ret = write(fd, (char *)&sb, INCOMPLETE_SUPERBLOCK_STRUCT_SIZE);
 
 	if (ret != SUPERBLOCK_STRUCT_SIZE) {
 		printf("Bytes written [%d] are not equal to sb size.\n", (int)ret);

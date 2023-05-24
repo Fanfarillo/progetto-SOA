@@ -2,7 +2,6 @@
 #define _ONEFILEFS_H
 
 #include <linux/fs.h>
-#include <linux/rculist.h>
 #include <linux/types.h>
 
 #define MOD_NAME "SINGLE FILE FS"		//nome del modulo
@@ -23,7 +22,13 @@
 
 //qui iniziano le define aggiunte direttamente da me
 #define METADATA_SIZE 4					//numero di byte che compongono i metadati di ciascun blocco
-#define SUPERBLOCK_STRUCT_SIZE (4*sizeof(uint64_t) + sizeof(unsigned int) + sizeof(struct list_head))	//numero di byte occupati da struct onefilefs_sb_info
+#define INCOMPLETE_SUPERBLOCK_STRUCT_SIZE (4*sizeof(uint64_t) + sizeof(unsigned int))	//numero di byte occupati da struct onefilefs_sb_incomplete_info
+
+#ifdef __x86_64__
+#define SUPERBLOCK_STRUCT_SIZE (4*sizeof(uint64_t) + sizeof(unsigned int) + 16)	//numero di byte occupati da struct onefilefs_sb_info
+#else
+#define SUPERBLOCK_STRUCT_SIZE (4*sizeof(uint64_t) + sizeof(unsigned int) + 8)	//numero di byte occupati da struct onefilefs_sb_info
+#endif
 
 //inode definition
 struct onefilefs_inode {
@@ -41,15 +46,15 @@ struct onefilefs_dir_record {
 	uint64_t inode_no;
 };
 
-//superblock definition
-struct onefilefs_sb_info {
+//superblock (partial) definition: nel superblocco andrebbe anche il campo struct list_head rcu_head ma non è possibile definirlo in questo file header per motivi di import.
+struct onefilefs_sb_incomplete_info {
 	uint64_t version;
 	uint64_t magic;
 	uint64_t block_size;
 	//qui iniziano i campi definiti da me
 	uint64_t total_data_blocks;
 	unsigned int total_writes;	//contatore atomico globale del numero di scritture; corrisponde al numero d'ordine (write_counter) assegnato all'ultimo blocco scritto.
-	struct list_head rcu_head;
+	//struct list_head rcu_head;
 };
 
 //qui iniziano le strutture aggiunte direttamente da me
@@ -57,25 +62,11 @@ struct mount_info {
 	uint64_t is_mounted;
 };
 
-struct rcu_node {
-	unsigned int write_counter : 31;	//serve a stabilire il corretto ordinamento delle scritture sui blocchi; è un valore che parte da 1; è un campo a 31 bit.
-	unsigned int is_valid : 1;			//flag che indica se il blocco è valido o meno; è un campo a 1 bit.
-	struct list_head lh;
-};
-
-// file.c
+//file.c
 extern const struct inode_operations onefilefs_inode_ops;
 extern const struct file_operations fops;
 
-// dir.c
+//dir.c
 extern const struct file_operations onefilefs_dir_operations;
-
-char *file_body[] = {	//this is the default content of the unique file
-	"Abbiamo lezione solo a sogene non mi va di spostarmi avanti e indietro anche se non mi piace andare a sogene\n",
-	"Forse non ci siamo capiti nell'audio di ieri\n",
-	"Intanto solo per te un saluto dal mitico\n",
-	"però ecco... io sono l'opposto ma solo perché sono pazzo io. What's app è la cosa minore, alla fine non mi danno fastidio i messaggi sfusi (se sono meno di 6)\n",
-	"Come mi sono persa questa cosaaaaaaaaa\n"
-};
 
 #endif
