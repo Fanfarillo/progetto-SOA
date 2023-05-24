@@ -83,7 +83,7 @@ int main(int argc, char *argv[])
 	//scrittura del superblocco (block 0) del file system, che comprende info come numero di versione, magic number e dimensione dei blocchi.
 	ret = write(fd, (char *)&sb, INCOMPLETE_SUPERBLOCK_STRUCT_SIZE);
 
-	if (ret != SUPERBLOCK_STRUCT_SIZE) {
+	if (ret != INCOMPLETE_SUPERBLOCK_STRUCT_SIZE) {
 		printf("Bytes written [%d] are not equal to sb size.\n", (int)ret);
 		fflush(stdout);
 		close(fd);
@@ -93,7 +93,7 @@ int main(int argc, char *argv[])
 	fflush(stdout);
 
 	//padding for superblock
-	nbytes = DEFAULT_BLOCK_SIZE - SUPERBLOCK_STRUCT_SIZE;
+	nbytes = DEFAULT_BLOCK_SIZE - INCOMPLETE_SUPERBLOCK_STRUCT_SIZE;
 	block_padding = malloc(nbytes);
 	ret = write(fd, block_padding, nbytes);	//padding per il superblocco
 
