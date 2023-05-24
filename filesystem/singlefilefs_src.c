@@ -20,6 +20,54 @@ static struct dentry_operations singlefilefs_dentry_ops = {
 //qui iniziano le variabili globali definite direttamente da me
 struct mount_info m_info = {0};
 
+//AUXILIAR FUNCTIONS PROTOTYPES
+int populate_rcu_list(struct list_head *, int);
+
+//funzione invocata da singlefilefs_fill_super() per agganciare tutti quanti i nodi relativi ai blocchi del nostro file system alla lista collegata (la RCU list)
+int populate_rcu_list(struct list_head *head, int num_data_blocks) {
+
+    int block_index;        //per il ciclo for
+    int num_written_data_blocks;
+    struct rcu_node *node;
+    struct list_head *prev; //puntatore alla list_head dell'elemento a cui bisognerà collegare quello nuovo (chiaramente da aggiornare a ogni iterazione del for)
+
+    //calcolo del numero di blocchi che sono stati inizializzati in fase di creazione del file system; questo permette di stabilire quanti nodi dovranno avere i metadati inizializzati.
+    num_written_data_blocks = sizeof(file_body)/sizeof(file_body[0]); //funziona perché stiamo dividendo la dimensione di un array di puntatori per la dimensione di un puntatore.
+
+    //chiaramente alla prima iterazione prev=head
+    prev=head;
+
+    for(block_index=0; block_index<num_data_blocks+2; block_index++) {    //vengono allocati anche i due blocchi iniziali (superblocco e inode del file)
+        node = kmalloc(sizeof(struct rcu_node), GFP_KERNEL);
+        if (!node)
+            return -1;
+
+        //caso in cui il blocco block_index è il superblocco o l'inode del file
+        if (block_index < 2) {
+            node->is_valid = 1;
+            node->write_counter = 0;
+        }        
+        //caso in cui il blocco block_index è un blocco dati effettivamente inizializzato
+        else if (block_index >= 2 && block_index < num_written_data_blocks+2) {
+            node->is_valid = 1;
+            node->write_counter = block_index-1;
+        }
+        //caso in cui il blocco block_index è un blocco dati non ancora inizializzato
+        else {
+            node->is_valid = 0;
+            node->write_counter = 0;
+        }
+
+        //inserimento del nuovo nodo all'interno della RCU list; avviene senza sincronizzazione perché siamo ancora in fase di setup e non può esservi concorrenza.
+        list_add_rcu(&(node->lh), prev);
+        prev=&(node->lh);
+
+    }
+
+    return 0;
+
+}
+
 //funzione che ha il compito di inizializzare il superblocco del filesystem "singlefilefs"
 int singlefilefs_fill_super(struct super_block *sb, void *data, int silent) {   
 
@@ -34,6 +82,7 @@ int singlefilefs_fill_super(struct super_block *sb, void *data, int silent) {
     struct onefilefs_inode *inode_disk;
     int num_mounted_blocks;
     int num_expected_blocks;
+    int ret;
 
     //unique identifier of the file system
     sb->s_magic = MAGIC;
@@ -58,10 +107,7 @@ int singlefilefs_fill_super(struct super_block *sb, void *data, int silent) {
     //inizializzazione della RCU a partire dalla list_head dell'elemento 'fantoccio', che è l'elemento che punta al primo e all'ultimo elemento vero e proprio della lista
     INIT_LIST_HEAD_RCU(head);
     sb_disk->rcu_head = *head;  //inizializzazione del campo di tipo list_head della struct che descrive il superblocco (struct onefilefs_sb_info *sb_disk)
-
-    //TODO: popolare tutta quanta la lista collegata magari con una funzione ausiliaria
-
-    brelse(bh);             //rilascio del blocco bh (i.e. del superblocco del file system)
+    brelse(bh);                 //rilascio del blocco bh (i.e. del superblocco del file system)
 
     //lettura dell'inode dell'unico file del file system
     bh = sb_bread(sb, SINGLEFILEFS_FILE_INODE_NUMBER);
@@ -80,6 +126,12 @@ int singlefilefs_fill_super(struct super_block *sb, void *data, int silent) {
     //check on the expected magic number
     if (magic != sb->s_magic){
 	    return -EBADF;  //-EBADF = file descriptor non valido
+    }
+
+    //popolamento di tutta quanta la RCU list con una funzione ausiliaria (populate_rcu_list()); restituisce 0 in caso di successo, un valore negativo altrimenti.
+    ret = populate_rcu_list(head, num_mounted_blocks);
+    if (ret < 0) {
+        return -ENOMEM; //-ENOMEM = errore di esaurimento della memoria
     }
 
     sb->s_fs_info = NULL; //FS specific data (the magic number) already reported into the generic superblock
@@ -189,4 +241,3 @@ static struct file_system_type onefilefs_type = {
     .mount      = singlefilefs_mount,           //funzione da chiamare quando si vuole montare il file system
     .kill_sb    = singlefilefs_kill_superblock, //funzione da chiamare quando si vuole eliminare un superblocco associato al filesystem
 };
-

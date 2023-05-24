@@ -9,14 +9,6 @@
 
 #include "singlefilefs.h"
 
-char *file_body[] = {	//this is the default content of the unique file
-	"Abbiamo lezione solo a sogene non mi va di spostarmi avanti e indietro anche se non mi piace andare a sogene\n",
-	"Forse non ci siamo capiti nell'audio di ieri\n",
-	"Intanto solo per te un saluto dal mitico\n",
-	"però ecco... io sono l'opposto ma solo perché sono pazzo io. What's app è la cosa minore, alla fine non mi danno fastidio i messaggi sfusi (se sono meno di 6)\n",
-	"Come mi sono persa questa cosaaaaaaaaa\n"
-};
-
 /*
 	This makefs will write the following information onto the disk
 	- BLOCK 0, superblock;
@@ -36,10 +28,12 @@ int main(int argc, char *argv[])
 	char *block_padding;
 
 	//qui iniziano le variabili locali definite direttamente da me
-	int i;	//per i cicli for
+	int block_index;	//per il ciclo for
 	char *block_metadata;
 	int num_data_blocks;
 	int num_data_blocks_to_write;
+	unsigned int numeric_metadata;	//i primi 31 bit costituiscono il write_counter, mentre l'ultimo è il bit di validità del blocco.
+	char *metadata;
 
 	//il programma prende come argomento il dispositivo di destinazione in cui verrà creato il file system.
 	if (argc != 3) {
@@ -76,7 +70,8 @@ int main(int argc, char *argv[])
 	sb.version = 1;//file system version
 	sb.magic = MAGIC;
 	sb.block_size = DEFAULT_BLOCK_SIZE;
-	sb.total_data_blocks = num_data_blocks;	
+	sb.total_data_blocks = num_data_blocks;
+	sb.total_writes = num_data_blocks_to_write;
 	//sanity check sulla dimensione della struct sb (superblock); qui si tiene conto anche del campo list_head perché verrà aggiunto nel superblocco successivamente (in singlefilefs_src.c).
 	if (SUPERBLOCK_STRUCT_SIZE > DEFAULT_BLOCK_SIZE) {
 		printf("Size of superblock exceeds default block size.\n");
@@ -143,9 +138,7 @@ int main(int argc, char *argv[])
 	fflush(stdout);
 
 	//write file datablocks
-	for (int block_index=0; block_index<num_data_blocks; block_index++) {
-		//PROVVISORIAMENTE questo pointer rappresenta i metadati dei vari blocchi. TODO: è da aggiustare secondo le nostre esigenze.
-		const char *metadata = "META";
+	for (block_index=0; block_index<num_data_blocks; block_index++) {
 
 		//caso in cui ci sono effettivamente delle informazioni da riportare nel blocco block_index
 		if (block_index < num_data_blocks_to_write) {
@@ -156,6 +149,11 @@ int main(int argc, char *argv[])
 				close(fd);
 				return -1;
 			}
+
+			//per il primo blocco i primi 31 bit costituiscono uno 0 e l'ultimo è pari a 1; per il secondo blocco i primi 31 bit costituiscono un 1 e l'ultimo è pari a 1; e così via.
+			numeric_metadata = (block_index+1) << 1;	//metadata = 2*(block_index+1); ciò porta a liberare l'ultimo bit del numero e di traslare tutti gli altri bit di una posizione verso sx.
+			numeric_metadata++;							//inizializzazione dell'ultimo bit (bit di validità) a 1.
+			sprintf(metadata, "%d", numeric_metadata);	//conversione di numeric_metadata in stringa (metadata)
 
 			//scrittura dei metadati del blocco
 			nbytes = METADATA_SIZE;
