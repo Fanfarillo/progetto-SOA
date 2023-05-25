@@ -29,12 +29,11 @@ int main(int argc, char *argv[])
 	char *block_padding;
 
 	//qui iniziano le variabili locali definite direttamente da me
-	int block_index;	//per il ciclo for
-	char *block_metadata;
+	int i, block_index;	//per i cicli for
 	int num_data_blocks;
 	int num_data_blocks_to_write;
 	unsigned int numeric_metadata;	//i primi 31 bit costituiscono il write_counter, mentre l'ultimo è il bit di validità del blocco.
-	char *metadata;
+	unsigned char *block_metadata;
 
 	//il programma prende come argomento il dispositivo di destinazione in cui verrà creato il file system.
 	if (argc != 3) {
@@ -154,19 +153,21 @@ int main(int argc, char *argv[])
 			//per il primo blocco i primi 31 bit costituiscono uno 0 e l'ultimo è pari a 1; per il secondo blocco i primi 31 bit costituiscono un 1 e l'ultimo è pari a 1; e così via.
 			numeric_metadata = (block_index+1) << 1;	//metadata = 2*(block_index+1); ciò porta a liberare l'ultimo bit del numero e di traslare tutti gli altri bit di una posizione verso sx.
 			numeric_metadata++;							//inizializzazione dell'ultimo bit (bit di validità) a 1.
-			sprintf(metadata, "%d", numeric_metadata);	//conversione di numeric_metadata in stringa (metadata)
+			//conversione di numeric_metadata in stringa (block_metadata)
+			block_metadata = (unsigned char *)&numeric_metadata;
 
-			//scrittura dei metadati del blocco
-			nbytes = METADATA_SIZE;
-			block_metadata = malloc(nbytes);
-			strncpy(block_metadata, metadata, nbytes);
-			ret = write(fd, block_metadata, nbytes);
-			if (ret != METADATA_SIZE) {
-				printf("Writing file datablock has failed.\n");
-				fflush(stdout);
-				close(fd);
-				return -1;				
+			//scrittura dei metadati del blocco (1 solo byte per volta)
+			for(i=0; i<sizeof(unsigned int); i++) {
+				ret = write(fd, &block_metadata[i], 1);
+				if (ret != 1) {
+					printf("Writing file datablock has failed.\n");
+					fflush(stdout);
+					close(fd);
+					return -1;		
+				}
+
 			}
+
 			printf("Metadata of datablock %d written successfully.\n", block_index);
 			fflush(stdout);
 			
