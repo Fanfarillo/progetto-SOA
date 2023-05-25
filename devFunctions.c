@@ -1,6 +1,8 @@
 #include <linux/fs.h>
 #include <linux/init.h>
 #include <linux/module.h>
+#include <linux/mutex.h>
+#include <linux/rculist.h>
 #include <linux/string.h>
 #include <linux/syscalls.h>
 #include <linux/types.h>
@@ -33,7 +35,7 @@ asmlinkage int sys_put_data(char *source, size_t size)
         return -EINVAL; //-EINVAL = parametri non validi (in questo caso size_t size e/o char *source)
     }
 
-    printk("%s: questa è l'implementazione dummy della system call put_data()\n", MOD_NAME);
+    printk("%s: la system call put_data() è stata eseguita con successo\n", MOD_NAME);
     return 0;
 
 }
@@ -59,8 +61,12 @@ asmlinkage int sys_get_data(int offset, char *destination, size_t size)
         printk("%s: impossibile eseguire l'operazione get_data(): la quantità di dati da leggere deve essere strettamente positiva\n", MOD_NAME);
         return -EINVAL; //-EINVAL = parametri non validi (in questo caso size_t size)
     }
-
+   
+    //TODO: capire se è sufficiente chiamare semplicemente una rcu_read_lock() e una rcu_read_unlock() nel caso in cui bisogna leggere solo dal dispositivo e non dalla RCU list.
+    rcu_read_lock();
     sb_struct = get_superblock_info();
+    rcu_read_unlock();
+
     if (sb_struct == NULL) {
         printk("%s: impossibile eseguire l'operazione get_data(): si è verificato un errore col recupero dei dati del superblocco\n", MOD_NAME);
         return -EIO; //-EIO = errore di input/output
@@ -70,7 +76,7 @@ asmlinkage int sys_get_data(int offset, char *destination, size_t size)
         return -EINVAL; //-EINVAL = parametri non validi (in questo caso int offset)
     }
 
-    printk("%s: questa è l'implementazione dummy della system call get_data()\n", MOD_NAME);
+    printk("%s: la system call get_data() è stata eseguita con successo\n", MOD_NAME);
     return 0;
 
 }
@@ -89,7 +95,11 @@ asmlinkage int sys_invalidate_data(int offset)
         return -ENODEV; //-ENODEV = file system non esistente
     }
 
+    //TODO: capire se è sufficiente chiamare semplicemente una rcu_read_lock() e una rcu_read_unlock() nel caso in cui bisogna leggere solo dal dispositivo e non dalla RCU list.
+    rcu_read_lock();
     sb_struct = get_superblock_info();
+    rcu_read_unlock();
+
     if (sb_struct == NULL) {
         printk("%s: impossibile eseguire l'operazione invalidate_data(): si è verificato un errore col recupero dei dati del superblocco\n", MOD_NAME);
         return -EIO; //-EIO = errore di input/output
@@ -99,7 +109,7 @@ asmlinkage int sys_invalidate_data(int offset)
         return -EINVAL; //-EINVAL = parametri non validi (in questo caso int offset)
     }
 
-    printk("%s: questa è l'implementazione dummy della system call invalidate_data()\n", MOD_NAME);
+    printk("%s: la system call invalidate_data() è stata eseguita con successo\n", MOD_NAME);
     return 0;
 
 }
@@ -154,7 +164,7 @@ static ssize_t dev_read(struct file *filp, char *buf, size_t len, loff_t *off) {
     //compute the actual index of the the block to be read from device
     block_to_read = *off / DEFAULT_BLOCK_SIZE + 2; //the value 2 accounts for superblock and file-inode on device (block 0 & block 1)
     
-    printk("%s: read operation must access block %d of the device",MOD_NAME, block_to_read);
+    printk("%s: read operation must access block %d of the device", MOD_NAME, block_to_read);
 
     //sb_read acquisisce il contenuto del blocco da leggere (quello di cui abbiamo appena calcolato l'indice).
     bh = (struct buffer_head *)sb_bread(filp->f_path.dentry->d_inode->i_sb, block_to_read);
