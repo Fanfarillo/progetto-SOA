@@ -22,13 +22,7 @@
 
 //qui iniziano le define aggiunte direttamente da me
 #define METADATA_SIZE 4					//numero di byte che compongono i metadati di ciascun blocco
-#define INCOMPLETE_SUPERBLOCK_STRUCT_SIZE (4*sizeof(uint64_t) + sizeof(unsigned int))	//numero di byte occupati da struct onefilefs_sb_incomplete_info
-
-#ifdef __x86_64__
-#define SUPERBLOCK_STRUCT_SIZE (4*sizeof(uint64_t) + sizeof(unsigned int) + 16)	//numero di byte occupati da struct onefilefs_sb_info
-#else
-#define SUPERBLOCK_STRUCT_SIZE (4*sizeof(uint64_t) + sizeof(unsigned int) + 8)	//numero di byte occupati da struct onefilefs_sb_info
-#endif
+#define USER_SUPERBLOCK_STRUCT_SIZE (4*sizeof(uint64_t) + sizeof(unsigned int))	//numero di byte occupati da struct onefilefs_sb_user_info
 
 //inode definition
 struct onefilefs_inode {
@@ -47,14 +41,13 @@ struct onefilefs_dir_record {
 };
 
 //superblock (partial) definition: nel superblocco andrebbe anche il campo struct list_head rcu_head ma non è possibile definirlo in questo file header per motivi di import.
-struct onefilefs_sb_incomplete_info {
+struct onefilefs_sb_user_info {
 	uint64_t version;
 	uint64_t magic;
 	uint64_t block_size;
 	//qui iniziano i campi definiti da me
 	uint64_t total_data_blocks;
 	unsigned int total_writes;	//contatore atomico globale del numero di scritture; corrisponde al numero d'ordine (write_counter) assegnato all'ultimo blocco scritto.
-	//struct list_head rcu_head;
 };
 
 //qui iniziano le strutture aggiunte direttamente da me

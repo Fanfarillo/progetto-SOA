@@ -2,6 +2,7 @@
 #include <linux/fs.h>
 #include <linux/init.h>
 #include <linux/module.h>
+#include <linux/mutex.h>
 #include <linux/rculist.h>
 #include <linux/slab.h>
 #include <linux/string.h>
@@ -70,7 +71,7 @@ int populate_rcu_list(struct list_head *head, int num_data_blocks) {
 
 }
 
-//funzione che ha il compito di inizializzare il superblocco del filesystem "singlefilefs"
+//funzione che ha il compito di istanziare il superblocco del filesystem "singlefilefs"
 int singlefilefs_fill_super(struct super_block *sb, void *data, int silent) {   
 
     struct inode *root_inode;
@@ -80,11 +81,17 @@ int singlefilefs_fill_super(struct super_block *sb, void *data, int silent) {
     uint64_t magic;
 
     //qui iniziano le variabili locali definite direttamente da me
+    static DEFINE_MUTEX(sb_mutex);  //dichiarazione e definizione del mutex da aggiungere poi al superblocco del nostro dispositivo
     struct list_head *head; //puntatore al campo list_head da aggiungere al superblocco
     struct onefilefs_inode *inode_disk;
     int num_mounted_blocks;
     int num_expected_blocks;
     int ret;
+
+    //controllo preliminare sulla dimensione della struct onefilefs_sb_info (che mantiene tutti i dati del superblocco): se eccede la dimensione di un blocco, c'è un GROSSO problema.
+    if (sizeof(struct onefilefs_sb_info) > DEFAULT_BLOCK_SIZE) {
+        return -ENOMEM; //-ENOMEM = errore dovuto a una quantità di memoria a disposizione insufficiente
+    }
 
     //unique identifier of the file system
     sb->s_magic = MAGIC;
@@ -95,8 +102,8 @@ int singlefilefs_fill_super(struct super_block *sb, void *data, int silent) {
 	    return -EIO;    //-EIO = errore di input/output
     }
     sb_disk = (struct onefilefs_sb_info *)bh->b_data;
-    magic = sb_disk->magic; //estrazione del magic number a partire dalle informazioni ottenute con sb_bread()
-    num_expected_blocks = sb_disk->total_data_blocks;   //estrazione del numero massimo di blocchi che è stato imposto a tempo di compilazione (DATA_BLOCKS)
+    magic = sb_disk->user_sb.magic; //estrazione del magic number a partire dalle informazioni ottenute con sb_bread()
+    num_expected_blocks = sb_disk->user_sb.total_data_blocks;   //estrazione del numero massimo di blocchi che è stato imposto a tempo di compilazione (DATA_BLOCKS)
 
     /* Inizializzazione (all'interno del superblocco) del campo di tipo struct list_head che punta, mediante puntatori next e prev, rispettivamente al primo e
      * all'ultimo elemento della RCU list. Tale lista doppiamente collegata rappresenta tutti quanti i blocchi del file e comprende anche il superblocco e l'inode
@@ -109,7 +116,10 @@ int singlefilefs_fill_super(struct super_block *sb, void *data, int silent) {
     //inizializzazione della RCU a partire dalla list_head dell'elemento 'fantoccio', che è l'elemento che punta al primo e all'ultimo elemento vero e proprio della lista
     INIT_LIST_HEAD_RCU(head);
     sb_disk->rcu_head = *head;  //inizializzazione del campo di tipo list_head della struct che descrive il superblocco (struct onefilefs_sb_info *sb_disk)
-    brelse(bh);                 //rilascio del blocco bh (i.e. del superblocco del file system)
+
+    //inizializzazione (all'interno del superblocco) del campo di tipo struct mutex
+    sb_disk->write_mutex = sb_mutex;
+    brelse(bh); //rilascio del blocco bh (i.e. del superblocco del file system)
 
     //lettura dell'inode dell'unico file del file system
     bh = sb_bread(sb, SINGLEFILEFS_FILE_INODE_NUMBER);
@@ -181,7 +191,9 @@ int singlefilefs_fill_super(struct super_block *sb, void *data, int silent) {
     //unlock the inode to make it usable
     unlock_new_inode(root_inode);
 
+    printk("%s: singlefilefs_fill_super() function executed successfully\n", MOD_NAME);
     return 0;
+    
 }
 
 //called on file system unmounting
@@ -198,7 +210,7 @@ static void singlefilefs_kill_superblock(struct super_block *s) {
     }
 
     kill_block_super(s);    //è lei che esegue effettivamente l'eliminazione del superblocco, eliminando le risorse ad esso associate.
-    printk(KERN_INFO "%s: singlefilefs unmount successful.\n",MOD_NAME);
+    printk("%s: singlefilefs unmount successful\n", MOD_NAME);
     return;
 
 }
@@ -228,9 +240,9 @@ struct dentry *singlefilefs_mount(struct file_system_type *fs_type, int flags, c
     ret = mount_bdev(fs_type, flags, dev_name, data, singlefilefs_fill_super);
 
     if (unlikely(IS_ERR(ret)))  //unlikely() è il duale di likely().
-        printk("%s: error mounting onefilefs",MOD_NAME);
+        printk("%s: error mounting onefilefs", MOD_NAME);
     else
-        printk("%s: singlefilefs is successfully mounted on from device %s\n",MOD_NAME,dev_name);
+        printk("%s: singlefilefs is successfully mounted on from device %s\n", MOD_NAME, dev_name);
 
     return ret;
 

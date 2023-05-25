@@ -44,7 +44,7 @@ __SYSCALL_DEFINEx(3, _get_data, int, offset, char *, destination, size_t, size)
 asmlinkage int sys_get_data(int offset, char *destination, size_t size)
 #endif
 {   
-    struct onefilefs_sb_info *sb;
+    struct onefilefs_sb_info *sb_struct;
 
     //sanity checks
     if (!m_info.is_mounted) {
@@ -60,12 +60,12 @@ asmlinkage int sys_get_data(int offset, char *destination, size_t size)
         return -EINVAL; //-EINVAL = parametri non validi (in questo caso size_t size)
     }
 
-    sb = get_superblock_info();
-    if (sb == NULL) {
+    sb_struct = get_superblock_info();
+    if (sb_struct == NULL) {
         printk("%s: impossibile eseguire l'operazione get_data(): si è verificato un errore col recupero dei dati del superblocco\n", MOD_NAME);
         return -EIO; //-EIO = errore di input/output
     }
-    if (offset < 0 || offset >= sb->total_data_blocks) {    //stiamo assumendo offset che vanno da 0 a NBLOCKS-1
+    if (offset < 0 || offset >= sb_struct->user_sb.total_data_blocks) {    //stiamo assumendo offset che vanno da 0 a NBLOCKS-1
         printk("%s: impossibile eseguire l'operazione get_data(): il blocco specificato (%d) non esiste\n", MOD_NAME, offset);
         return -EINVAL; //-EINVAL = parametri non validi (in questo caso int offset)
     }
@@ -81,7 +81,7 @@ __SYSCALL_DEFINEx(1, _invalidate_data, int, offset)
 asmlinkage int sys_invalidate_data(int offset)
 #endif
 {
-    struct onefilefs_sb_info *sb;
+    struct onefilefs_sb_info *sb_struct;
 
     //sanity checks
     if (!m_info.is_mounted) {
@@ -89,12 +89,12 @@ asmlinkage int sys_invalidate_data(int offset)
         return -ENODEV; //-ENODEV = file system non esistente
     }
 
-    sb = get_superblock_info();
-    if (sb == NULL) {
+    sb_struct = get_superblock_info();
+    if (sb_struct == NULL) {
         printk("%s: impossibile eseguire l'operazione invalidate_data(): si è verificato un errore col recupero dei dati del superblocco\n", MOD_NAME);
         return -EIO; //-EIO = errore di input/output
     }
-    if (offset < 0 || offset >= sb->total_data_blocks) {    //stiamo assumendo offset che vanno da 0 a NBLOCKS-1
+    if (offset < 0 || offset >= sb_struct->user_sb.total_data_blocks) {    //stiamo assumendo offset che vanno da 0 a NBLOCKS-1
         printk("%s: impossibile eseguire l'operazione invalidate_data(): il blocco specificato (%d) non esiste\n", MOD_NAME, offset);
         return -EINVAL; //-EINVAL = parametri non validi (in questo caso int offset)
     }

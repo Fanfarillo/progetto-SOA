@@ -2,17 +2,16 @@
 #define _ONEFILEFSKER_H
 
 #include <linux/list.h>
+#include <linux/mutex.h>
 #include <linux/types.h>
+
+#include "singlefilefs.h"
 
 //superblock (complete) definition
 struct onefilefs_sb_info {
-	uint64_t version;
-	uint64_t magic;
-	uint64_t block_size;
-	//qui iniziano i campi definiti da me
-	uint64_t total_data_blocks;
-	unsigned int total_writes;	//contatore atomico globale del numero di scritture; corrisponde al numero d'ordine (write_counter) assegnato all'ultimo blocco scritto.
+	struct onefilefs_sb_user_info user_sb;
 	struct list_head rcu_head;
+	struct mutex write_mutex;			//serve a sincronizzare gli scrittori tra loro (ma non coi lettori)
 };
 
 struct rcu_node {

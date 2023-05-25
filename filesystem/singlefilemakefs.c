@@ -22,7 +22,7 @@ int main(int argc, char *argv[])
 	int fd;
 	long unsigned int nbytes;
 	ssize_t ret;
-	struct onefilefs_sb_incomplete_info sb;
+	struct onefilefs_sb_user_info sb;
 	struct onefilefs_inode root_inode;
 	struct onefilefs_inode file_inode;
 	struct onefilefs_dir_record record;
@@ -72,17 +72,10 @@ int main(int argc, char *argv[])
 	sb.block_size = DEFAULT_BLOCK_SIZE;
 	sb.total_data_blocks = num_data_blocks;
 	sb.total_writes = num_data_blocks_to_write;
-	//sanity check sulla dimensione della struct sb (superblock); qui si tiene conto anche del campo list_head perché verrà aggiunto nel superblocco successivamente (in singlefilefs_src.c).
-	if (SUPERBLOCK_STRUCT_SIZE > DEFAULT_BLOCK_SIZE) {
-		printf("Size of superblock exceeds default block size.\n");
-		fflush(stdout);
-		close(fd);
-		return -1;
-	}
 	//scrittura del superblocco (block 0) del file system, che comprende info come numero di versione, magic number e dimensione dei blocchi.
-	ret = write(fd, (char *)&sb, INCOMPLETE_SUPERBLOCK_STRUCT_SIZE);
+	ret = write(fd, (char *)&sb, USER_SUPERBLOCK_STRUCT_SIZE);
 
-	if (ret != INCOMPLETE_SUPERBLOCK_STRUCT_SIZE) {
+	if (ret != USER_SUPERBLOCK_STRUCT_SIZE) {
 		printf("Bytes written [%d] are not equal to sb size.\n", (int)ret);
 		fflush(stdout);
 		close(fd);
@@ -92,7 +85,7 @@ int main(int argc, char *argv[])
 	fflush(stdout);
 
 	//padding for superblock
-	nbytes = DEFAULT_BLOCK_SIZE - INCOMPLETE_SUPERBLOCK_STRUCT_SIZE;
+	nbytes = DEFAULT_BLOCK_SIZE - USER_SUPERBLOCK_STRUCT_SIZE;
 	block_padding = malloc(nbytes);
 	ret = write(fd, block_padding, nbytes);	//padding per il superblocco
 
