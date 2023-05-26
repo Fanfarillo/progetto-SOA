@@ -11,7 +11,7 @@
 #include "singlefilefs_init.h"
 
 /*
-	This makefs will write the following information onto the disk
+	This singlefilemakefs will write the following information onto the disk
 	- BLOCK 0, superblock;
 	- BLOCK 1, inode of the unique file (the inode for root is volatile);
 	- BLOCK 2, ..., datablocks of the unique file 
