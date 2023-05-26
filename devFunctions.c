@@ -1,5 +1,6 @@
 #include <linux/fs.h>
 #include <linux/init.h>
+#include <linux/list.h>
 #include <linux/module.h>
 #include <linux/mutex.h>
 #include <linux/rculist.h>
@@ -21,6 +22,8 @@ __SYSCALL_DEFINEx(2, _put_data, char *, source, size_t, size)
 asmlinkage int sys_put_data(char *source, size_t size)
 #endif
 {
+    struct onefilefs_sb_info *sb_struct;
+
     //sanity checks
     if (!m_info.is_mounted) {
         printk("%s: impossibile eseguire l'operazione put_data(): il file system non è stato montato\n", MOD_NAME);
@@ -35,6 +38,11 @@ asmlinkage int sys_put_data(char *source, size_t size)
         return -EINVAL; //-EINVAL = parametri non validi (in questo caso size_t size e/o char *source)
     }
 
+    //TODO: capire se è sufficiente chiamare semplicemente una rcu_read_lock() e una rcu_read_unlock() nel caso in cui bisogna leggere solo dal dispositivo e non dalla RCU list.
+    rcu_read_lock();
+    sb_struct = get_superblock_info();
+    rcu_read_unlock();
+
     printk("%s: la system call put_data() è stata eseguita con successo\n", MOD_NAME);
     return 0;
 
@@ -46,7 +54,11 @@ __SYSCALL_DEFINEx(3, _get_data, int, offset, char *, destination, size_t, size)
 asmlinkage int sys_get_data(int offset, char *destination, size_t size)
 #endif
 {   
+    int i;
     struct onefilefs_sb_info *sb_struct;
+    struct list_head *head;
+    struct list_head *curr;
+    struct rcu_node *node_to_read;
 
     //sanity checks
     if (!m_info.is_mounted) {
@@ -76,8 +88,33 @@ asmlinkage int sys_get_data(int offset, char *destination, size_t size)
         return -EINVAL; //-EINVAL = parametri non validi (in questo caso int offset)
     }
 
+    //sincronizzazione RCU per l'operazione di lettura
+    head = &(sb_struct->rcu_head);
+    rcu_read_lock();
+
+    curr = get_first_data_block(head);
+    for(i=0; i<offset; i++) {
+        curr = list_next_or_null_rcu(head, curr, struct rcu_node, lh);
+    }
+
+    /* Funzione che restituisce il puntatore alla struct rcu_node contenente la struct_list head specificata.
+     *@param curr: puntatore alla struct list_head dell'elemento della RCU list di cui si vuole recuperare l'indirizzo base
+     *@param struct rcu_node: tipo di dato all'interno del quale è embeddato la list_head (i.e. tipo di dato dei nodi della RCU list)
+     *@param lh: nome del campo di tipo list_head all'interno dei nodi della RCU list
+     */
+    node_to_read = list_entry_rcu(curr, struct rcu_node, lh);
+
+    //check sulla validità del blocco target
+    if(!(node_to_read->is_valid)) {
+        printk("%s: impossibile eseguire l'operazione get_data(): il blocco specificato (%d) non è valido\n", MOD_NAME, offset);
+        return -ENODATA; //-ENODATA = nessun dato disponibile
+    }
+
+    //TODO: lettura effettiva del blocco
+    
+    rcu_read_unlock();
     printk("%s: la system call get_data() è stata eseguita con successo\n", MOD_NAME);
-    return 0;
+    return 0;   //TODO: il valore di ritorno della system call deve essere modificato.
 
 }
 

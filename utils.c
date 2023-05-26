@@ -2,7 +2,9 @@
 #include <linux/file.h>
 #include <linux/fs.h>
 #include <linux/init.h>
+#include <linux/list.h>
 #include <linux/module.h>
+#include <linux/rculist.h>
 #include <linux/slab.h>
 #include <linux/string.h>
 #include <linux/version.h>
@@ -13,8 +15,9 @@
 
 //UTILS FUNCTIONS PROTOTYPES
 struct onefilefs_sb_info *get_superblock_info(void);
+struct list_head *get_first_data_block(struct list_head *head);
 
-//questa funzione restituisce la struttura dati che comprende le informazioni contenute nel superblocco del dispositivo.
+//questa funzione restituisce il puntatore alla struttura dati che comprende le informazioni contenute nel superblocco del dispositivo.
 struct onefilefs_sb_info *get_superblock_info() {
 
     int fd;                         //file descriptor da utilizzare per il nostro dispositivo ("image")
@@ -68,5 +71,30 @@ struct onefilefs_sb_info *get_superblock_info() {
     kfree(buffer);
 
     return sb;
+
+}
+
+//questa funzione restituisce il puntatore alla struct list_head associata al nodo della RCU list associato al primo blocco dati (i.e. il terzo nodo della RCU list).
+struct list_head *get_first_data_block(struct list_head *head) {
+
+    int i;
+    struct list_head *curr;
+
+    /* Funzione che restituisce il puntatore alla struct list_head del primo elemento della RCU list subito dopo quello artificiale; se non esiste, restituisce NULL.
+     *@param head: puntatore alla struct list_head dell'elemento artificiale della RCU list
+     *@param struct rcu_node: tipo di dato all'interno del quale è embeddato la list_head (i.e. tipo di dato dei nodi della RCU list)
+     *@param lh: nome del campo di tipo list_head all'interno dei nodi della RCU list
+     */
+    curr = list_first_or_null_rcu(head, struct rcu_node, lh);
+    
+    for(i=0; i<2; i++) {
+        /* Funzione che restituisce il puntatore alla struct list_head dell'elemento successivo della RCU list rispetto a quello la cui struct list_head viene
+         * specificata come secondo parametro. Gli altri tre parametri sono gli stessi di list_first_or_null_rcu().
+         */
+        curr = list_next_or_null_rcu(head, curr, struct rcu_node, lh);
+
+    }
+
+    return curr;
 
 }
