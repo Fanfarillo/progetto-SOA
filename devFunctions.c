@@ -1,3 +1,5 @@
+#include <linux/fdtable.h>
+#include <linux/file.h>
 #include <linux/fs.h>
 #include <linux/init.h>
 #include <linux/list.h>
@@ -26,15 +28,15 @@ asmlinkage int sys_put_data(char *source, size_t size)
 
     //sanity checks
     if (!m_info.is_mounted) {
-        printk("%s: impossibile eseguire l'operazione put_data(): il file system non è stato montato\n", MOD_NAME);
+        printk("%s: impossibile eseguire la system call put_data(): il file system non è stato montato\n", MOD_NAME);
         return -ENODEV; //-ENODEV = file system non esistente
     }
     if (size > DEFAULT_BLOCK_SIZE-METADATA_SIZE) {
-        printk("%s: impossibile eseguire l'operazione put_data(): la dimensione dei dati da scrivere eccede la dimensione di un blocco\n", MOD_NAME);
+        printk("%s: impossibile eseguire la system call put_data(): la dimensione dei dati da scrivere eccede la dimensione di un blocco\n", MOD_NAME);
         return -EINVAL; //-EINVAL = parametri non validi (in questo caso size_t size)
     }
     if (size <= 0 || source == NULL) {
-        printk("%s: impossibile eseguire l'operazione put_data(): non vi sono dati da scrivere\n", MOD_NAME);
+        printk("%s: impossibile eseguire la system call put_data(): non vi sono dati da scrivere\n", MOD_NAME);
         return -EINVAL; //-EINVAL = parametri non validi (in questo caso size_t size e/o char *source)
     }
 
@@ -54,24 +56,25 @@ __SYSCALL_DEFINEx(3, _get_data, int, offset, char *, destination, size_t, size)
 asmlinkage int sys_get_data(int offset, char *destination, size_t size)
 #endif
 {   
-    int i;
+    int i, ret;
     struct onefilefs_sb_info *sb_struct;
     struct list_head *head;
     struct list_head *curr;
     struct rcu_node *node_to_read;
+    int fd;                         //file descriptor da utilizzare per il nostro dispositivo ("image")
+    struct file *f;                 //struttura che descrive il nostro dispositivo
+    loff_t bytes_offset;            //valore (offset) che indica il punto del dispositivo da cui deve iniziare la lettura
+    loff_t *pos;                    //puntatore che indica il punto del dispositivo da cui deve iniziare la lettura
+    int bytes_read;
 
-    //sanity checks
+    //sanity checks (notare che il caso size>DEFAULT_BLOCK_SIZE-METADATA_SIZE viene accettato e omologato al caso size==DEFAULT_BLOCK_SIZE-METADATA_SIZE)
     if (!m_info.is_mounted) {
-        printk("%s: impossibile eseguire l'operazione get_data(): il file system non è stato montato\n", MOD_NAME);
+        printk("%s: impossibile eseguire la system call get_data(): il file system non è stato montato\n", MOD_NAME);
         return -ENODEV; //-ENODEV = file system non esistente
     }
     if (destination == NULL) {
-        printk("%s: impossibile eseguire l'operazione get_data(): non è stato specificato alcun buffer di destinazione\n", MOD_NAME);
+        printk("%s: impossibile eseguire la system call get_data(): non è stato specificato alcun buffer di destinazione\n", MOD_NAME);
         return -EINVAL; //-EINVAL = parametri non validi (in questo caso char *destination)
-    }
-    if (size <= 0) {    //il caso size>DEFAULT_BLOCK_SIZE-METADATA_SIZE viene accettato e omologato al caso size==DEFAULT_BLOCK_SIZE-METADATA_SIZE
-        printk("%s: impossibile eseguire l'operazione get_data(): la quantità di dati da leggere deve essere strettamente positiva\n", MOD_NAME);
-        return -EINVAL; //-EINVAL = parametri non validi (in questo caso size_t size)
     }
    
     //TODO: capire se è sufficiente chiamare semplicemente una rcu_read_lock() e una rcu_read_unlock() nel caso in cui bisogna leggere solo dal dispositivo e non dalla RCU list.
@@ -80,12 +83,16 @@ asmlinkage int sys_get_data(int offset, char *destination, size_t size)
     rcu_read_unlock();
 
     if (sb_struct == NULL) {
-        printk("%s: impossibile eseguire l'operazione get_data(): si è verificato un errore col recupero dei dati del superblocco\n", MOD_NAME);
+        printk("%s: impossibile eseguire la system call get_data(): si è verificato un errore col recupero dei dati del superblocco\n", MOD_NAME);
         return -EIO; //-EIO = errore di input/output
     }
     if (offset < 0 || offset >= sb_struct->user_sb.total_data_blocks) {    //stiamo assumendo offset che vanno da 0 a NBLOCKS-1
-        printk("%s: impossibile eseguire l'operazione get_data(): il blocco specificato (%d) non esiste\n", MOD_NAME, offset);
+        printk("%s: impossibile eseguire la system call get_data(): il blocco specificato (%d) non esiste\n", MOD_NAME, offset);
         return -EINVAL; //-EINVAL = parametri non validi (in questo caso int offset)
+    }
+
+    if (size > DEFAULT_BLOCK_SIZE-METADATA_SIZE) {
+        size = DEFAULT_BLOCK_SIZE-METADATA_SIZE;    //in tal modo si leggono esclusivamente i dati posti nel blocco
     }
 
     //sincronizzazione RCU per l'operazione di lettura
@@ -106,15 +113,53 @@ asmlinkage int sys_get_data(int offset, char *destination, size_t size)
 
     //check sulla validità del blocco target
     if(!(node_to_read->is_valid)) {
-        printk("%s: impossibile eseguire l'operazione get_data(): il blocco specificato (%d) non è valido\n", MOD_NAME, offset);
+        printk("%s: impossibile eseguire la system call get_data(): il blocco specificato (%d) non è valido\n", MOD_NAME, offset);
         return -ENODATA; //-ENODATA = nessun dato disponibile
     }
 
-    //TODO: lettura effettiva del blocco
+    //preparazione alla lettura effettiva del blocco
+    fd = get_unused_fd_flags(0);    //ottenimento di un file descriptor disponibile
+    if (fd < 0) {
+        printk("%s: impossibile eseguire la system call get_data(): si è verificato un errore nell'ottenimento di un file descriptor\n", MOD_NAME);
+        return -EIO;    //-EIO = errore di input/output
+    }
+    f = filp_open(IMAGE_NAME, O_RDONLY, 0); //apertura del dispositivo in modalità sola lettura
+    if (IS_ERR(f)) {
+        printk("%s: impossibile eseguire la system call get_data(): si è verificato un errore nell'apertura del dispositivo\n", MOD_NAME);
+        return -EIO;    //-EIO = errore di input/output
+    }
+
+    /* Per ottenere l'offset iniziale, mi devo spostare di:
+     * 2+offset blocchi, che sono tutti quelli che precedono il target (compresi superblocco e inode del file)
+     * METADATA_SIZE byte, perché voglio leggere esclusivamente il payload
+     */
+    bytes_offset = (2+offset)*DEFAULT_BLOCK_SIZE + METADATA_SIZE;
+    pos = &bytes_offset;
+
+    //lettura effettiva del blocco
+    #if LINUX_VERSION_CODE >= KERNEL_VERSION(4,14,0)
+    ret = kernel_read(f, destination, size, pos);
+    #else
+    ret = vfs_read(f, destination, size, pos);
+    #endif
     
+    if (ret < 0) {
+        printk("%s: impossibile eseguire la system call get_data(): si è verificato un errore durante la lettura del blocco %d\n", MOD_NAME, offset);
+        filp_close(f, NULL);
+        return -EIO;    //-EIO = errore di input/output
+    }
+
+    //clean up
+    filp_close(f, NULL);
     rcu_read_unlock();
+
+    //considero il numero di byte letti come la lunghezza della stringa letta (eventualmente fino a '\0'); in mancanza di '\0', verrà restituito ret.
+    bytes_read = (int)strnlen(destination, ret);
+    if (bytes_read < ret)
+        bytes_read++;   //strnlen() non conta l'eventuale '\0': lo aggiungo a mano.
+
     printk("%s: la system call get_data() è stata eseguita con successo\n", MOD_NAME);
-    return 0;   //TODO: il valore di ritorno della system call deve essere modificato.
+    return bytes_read;
 
 }
 
@@ -128,7 +173,7 @@ asmlinkage int sys_invalidate_data(int offset)
 
     //sanity checks
     if (!m_info.is_mounted) {
-        printk("%s: impossibile eseguire l'operazione invalidate_data(): il file system non è stato montato\n", MOD_NAME);
+        printk("%s: impossibile eseguire la system call invalidate_data(): il file system non è stato montato\n", MOD_NAME);
         return -ENODEV; //-ENODEV = file system non esistente
     }
 
@@ -138,11 +183,11 @@ asmlinkage int sys_invalidate_data(int offset)
     rcu_read_unlock();
 
     if (sb_struct == NULL) {
-        printk("%s: impossibile eseguire l'operazione invalidate_data(): si è verificato un errore col recupero dei dati del superblocco\n", MOD_NAME);
+        printk("%s: impossibile eseguire la system call invalidate_data(): si è verificato un errore col recupero dei dati del superblocco\n", MOD_NAME);
         return -EIO; //-EIO = errore di input/output
     }
     if (offset < 0 || offset >= sb_struct->user_sb.total_data_blocks) {    //stiamo assumendo offset che vanno da 0 a NBLOCKS-1
-        printk("%s: impossibile eseguire l'operazione invalidate_data(): il blocco specificato (%d) non esiste\n", MOD_NAME, offset);
+        printk("%s: impossibile eseguire la system call invalidate_data(): il blocco specificato (%d) non esiste\n", MOD_NAME, offset);
         return -EINVAL; //-EINVAL = parametri non validi (in questo caso int offset)
     }
 
