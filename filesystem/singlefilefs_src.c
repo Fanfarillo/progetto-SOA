@@ -91,7 +91,7 @@ int singlefilefs_fill_super(struct super_block *sb, void *data, int silent) {
     sb->s_magic = MAGIC;
 
     //lettura del superblocco del file ystem
-    bh = sb_getblk(sb, SB_BLOCK_NUMBER);
+    bh = sb_getblk(sb, SB_BLOCK_NUMBER);    //TODO: forse da risostituire con sb_bread()
     if (!sb){
 	    return -EIO;    //-EIO = errore di input/output
     }
@@ -110,6 +110,7 @@ int singlefilefs_fill_super(struct super_block *sb, void *data, int silent) {
     if (ret < 0) {
         return -ENOMEM; //-ENOMEM = errore di esaurimento della memoria
     }
+    //TODO: provare a stampare qui gli elementi della RCU list
 
     //inizializzazione (all'interno del superblocco) del campo di tipo struct mutex
     sb_disk->write_mutex = sb_mutex;
