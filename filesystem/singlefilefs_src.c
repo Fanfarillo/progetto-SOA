@@ -32,13 +32,9 @@ int populate_rcu_list(struct list_head *head, int num_data_blocks) {
     int block_index;        //per il ciclo for
     int num_written_data_blocks;
     struct rcu_node *node;
-    struct list_head *prev; //puntatore alla list_head dell'elemento a cui bisognerà collegare quello nuovo (chiaramente da aggiornare a ogni iterazione del for)
 
     //calcolo del numero di blocchi che sono stati inizializzati in fase di creazione del file system; questo permette di stabilire quanti nodi dovranno avere i metadati inizializzati.
     num_written_data_blocks = sizeof(file_body)/sizeof(file_body[0]); //funziona perché stiamo dividendo la dimensione di un array di puntatori per la dimensione di un puntatore.
-
-    //chiaramente alla prima iterazione prev=head
-    prev=head;
 
     for(block_index=0; block_index<num_data_blocks+2; block_index++) {    //vengono allocati anche i due blocchi iniziali (superblocco e inode del file)
         node = kmalloc(sizeof(struct rcu_node), GFP_KERNEL);
@@ -62,8 +58,7 @@ int populate_rcu_list(struct list_head *head, int num_data_blocks) {
         }
 
         //inserimento del nuovo nodo all'interno della RCU list; avviene senza sincronizzazione perché siamo ancora in fase di setup e non può esservi concorrenza.
-        list_add_rcu(&(node->lh), prev);
-        prev=&(node->lh);
+        list_add_tail_rcu(&(node->lh), head);
 
     }
 
@@ -82,7 +77,6 @@ int singlefilefs_fill_super(struct super_block *sb, void *data, int silent) {
 
     //qui iniziano le variabili locali definite direttamente da me
     static DEFINE_MUTEX(sb_mutex);  //dichiarazione e definizione del mutex da aggiungere poi al superblocco del nostro dispositivo
-    struct list_head *head; //puntatore al campo list_head da aggiungere al superblocco
     struct onefilefs_inode *inode_disk;
     int num_mounted_blocks;
     int num_expected_blocks;
@@ -97,7 +91,7 @@ int singlefilefs_fill_super(struct super_block *sb, void *data, int silent) {
     sb->s_magic = MAGIC;
 
     //lettura del superblocco del file ystem
-    bh = sb_bread(sb, SB_BLOCK_NUMBER);
+    bh = sb_getblk(sb, SB_BLOCK_NUMBER);
     if (!sb){
 	    return -EIO;    //-EIO = errore di input/output
     }
@@ -109,17 +103,17 @@ int singlefilefs_fill_super(struct super_block *sb, void *data, int silent) {
      * all'ultimo elemento della RCU list. Tale lista doppiamente collegata rappresenta tutti quanti i blocchi del file e comprende anche il superblocco e l'inode
      * del file. Viene inoltre utilizzata come supporto per eseguire in modo agevole gli accessi in maniera sincronizzata (appunto mediante un approccio RCU).
      */
-    head = kmalloc(sizeof(struct list_head) ,GFP_KERNEL);
-    if (!head) {
+    INIT_LIST_HEAD_RCU(&(sb_disk->rcu_head));
+
+    //popolamento di tutta quanta la RCU list con una funzione ausiliaria (populate_rcu_list()); restituisce 0 in caso di successo, un valore negativo altrimenti.
+    ret = populate_rcu_list(&(sb_disk->rcu_head), num_expected_blocks);
+    if (ret < 0) {
         return -ENOMEM; //-ENOMEM = errore di esaurimento della memoria
     }
-    //inizializzazione della RCU a partire dalla list_head dell'elemento 'fantoccio', che è l'elemento che punta al primo e all'ultimo elemento vero e proprio della lista
-    INIT_LIST_HEAD_RCU(head);
-    sb_disk->rcu_head = *head;  //inizializzazione del campo di tipo list_head della struct che descrive il superblocco (struct onefilefs_sb_info *sb_disk)
 
     //inizializzazione (all'interno del superblocco) del campo di tipo struct mutex
     sb_disk->write_mutex = sb_mutex;
-    brelse(bh); //rilascio del blocco bh (i.e. del superblocco del file system)
+    brelse(bh);  //rilascio del buffer head bh
 
     //lettura dell'inode dell'unico file del file system
     bh = sb_bread(sb, SINGLEFILEFS_FILE_INODE_NUMBER);
@@ -131,19 +125,13 @@ int singlefilefs_fill_super(struct super_block *sb, void *data, int silent) {
 
     //check sul numero di blocchi effettivamente allocati, che non deve essere superiore a quello stabilito a tempo di compilazione (DATA_BLOCKS)
     if (num_mounted_blocks > num_expected_blocks) {
-        brelse(bh); //rilascio del blocco bh (i.e. del blocco relatio all'inode dell'unico file del file system)
+        brelse(bh); //rilascio del buffer head bh
         return -EINVAL; //-EINVAL = parametri non validi (in questo caso struct super_block *sb)
     }
 
     //check on the expected magic number
     if (magic != sb->s_magic){
 	    return -EBADF;  //-EBADF = file descriptor non valido
-    }
-
-    //popolamento di tutta quanta la RCU list con una funzione ausiliaria (populate_rcu_list()); restituisce 0 in caso di successo, un valore negativo altrimenti.
-    ret = populate_rcu_list(head, num_mounted_blocks);
-    if (ret < 0) {
-        return -ENOMEM; //-ENOMEM = errore di esaurimento della memoria
     }
 
     sb->s_fs_info = NULL; //FS specific data (the magic number) already reported into the generic superblock

@@ -1,8 +1,9 @@
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
 
-#include "filesystem/singlefilefs.h"
+#include "../filesystem/singlefilefs.h"
 
 #define PUT_SYSCALL 134
 #define GET_SYSCALL 156
@@ -156,17 +157,46 @@ void invalidate_operation() {
 
 }
 
+//funzione ausiliaria che si occupa di acquisire da stdin un valore tra tanti possibili
+char multichoice(char* question, char choices[], int num)
+{
+	char input_str[3];
+    int i, j;
+
+	//genera la stringa delle possibilità
+	char *possib = malloc(2*num*sizeof(char));
+
+    j=0;
+	for(i=0; i<num; i++) {
+		possib[j++] = choices[i];
+		possib[j++] = '/';
+	}
+	possib[j-1] = '\0'; //per eliminare l'ultima '/'
+
+	//chiede la risposta
+	while(1) {
+		//mostra la domanda
+		printf("%s [%s]: ", question, possib);
+        fflush(stdout);
+
+		fgets(input_str, 3, stdin);
+		char c = input_str[0];
+
+		//controlla se è un carattere valido
+		for(i=0; i<num; i++) {
+			if (c == choices[i])
+				return c;
+
+		}
+
+	}
+
+}
+
 int main(int argc, char **argv) {
 
-    char *selected_command;
-
-    //i due caratteri che deve ospitare select_command sono il codice numerico dell'operazione da effettuare e lo '\0'.
-    selected_command = malloc(2);
-    if (!selected_command) {
-        printf("[ERRORE] Problema di allocazione della memoria.\n");
-        fflush(stdout);
-        return -1;
-    }
+    char options[] = {'1', '2', '3', '4'};
+    char selected_command;
 
     while(1) {
 
@@ -178,22 +208,22 @@ int main(int argc, char **argv) {
         printf("4) Quit\n");
         fflush(stdout);
 
-        fgets(selected_command, 2, stdin);
+        selected_command = multichoice("Please select an option", options, sizeof(options)/sizeof(char));
 
         switch (selected_command) {
-            case "1":
+            case '1':
                 put_operation();
                 break;
             
-            case "2":
+            case '2':
                 get_operation();
                 break;
 
-            case "3":
+            case '3':
                 invalidate_operation();
                 break;
 
-            case "4":
+            case '4':
                 printf("Bye!\n");
                 fflush(stdout);
                 return 0;
@@ -204,9 +234,7 @@ int main(int argc, char **argv) {
                 break;
 
         }
-
-        printf("\nPress any key to continue...\n");
-        fflush(stdout);
+        
         getchar();
 
     }

@@ -59,8 +59,7 @@ asmlinkage int sys_get_data(int offset, char *destination, size_t size)
     int i, ret;
     struct onefilefs_sb_info *sb_struct;
     struct list_head *head;
-    struct list_head *curr;
-    struct rcu_node *node_to_read;
+    struct rcu_node *curr_node;
     int fd;                         //file descriptor da utilizzare per il nostro dispositivo ("image")
     struct file *f;                 //struttura che descrive il nostro dispositivo
     loff_t bytes_offset;            //valore (offset) che indica il punto del dispositivo da cui deve iniziare la lettura
@@ -99,20 +98,18 @@ asmlinkage int sys_get_data(int offset, char *destination, size_t size)
     head = &(sb_struct->rcu_head);
     rcu_read_lock();
 
-    curr = get_first_data_block(head);
-    for(i=0; i<offset; i++) {
-        curr = list_next_or_null_rcu(head, curr, struct rcu_node, lh);
+    curr_node = get_first_data_block(head);
+    if (!curr_node) {
+        printk("%s: impossibile eseguire la system call get_data() a causa di un errore interno\n", MOD_NAME);
+        return -EFAULT; //-EFAULT = l'indirizzo usato non è corretto (in questo caso è nullo)
     }
 
-    /* Funzione che restituisce il puntatore alla struct rcu_node contenente la struct_list head specificata.
-     *@param curr: puntatore alla struct list_head dell'elemento della RCU list di cui si vuole recuperare l'indirizzo base
-     *@param struct rcu_node: tipo di dato all'interno del quale è embeddato la list_head (i.e. tipo di dato dei nodi della RCU list)
-     *@param lh: nome del campo di tipo list_head all'interno dei nodi della RCU list
-     */
-    node_to_read = list_entry_rcu(curr, struct rcu_node, lh);
+    for(i=0; i<offset; i++) {
+        curr_node = list_next_or_null_rcu(head, &(curr_node->lh), struct rcu_node, lh);
+    }
 
     //check sulla validità del blocco target
-    if(!(node_to_read->is_valid)) {
+    if(!(curr_node->is_valid)) {
         printk("%s: impossibile eseguire la system call get_data(): il blocco specificato (%d) non è valido\n", MOD_NAME, offset);
         return -ENODATA; //-ENODATA = nessun dato disponibile
     }
