@@ -18,7 +18,7 @@ struct onefilefs_sb_info {
 struct data_block_content {
 	unsigned int metadata;
 	char payload[DEFAULT_BLOCK_SIZE-METADATA_SIZE];
-}
+};
 
 struct rcu_node {
 	unsigned int write_counter : 31;	//serve a stabilire il corretto ordinamento delle scritture sui blocchi; è un valore che parte da 1; è un campo a 31 bit.

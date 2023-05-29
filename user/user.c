@@ -1,3 +1,4 @@
+#include <limits.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -28,7 +29,7 @@ void put_operation() {
     fflush(stdout);
     scanf("%lu", &size);
     //sanity check
-    if (size == -1) {   //corrisponde a if(size == MAX_VALUE_FOR_SIZE_T - 1)
+    if (size > INT_MAX) {
         printf("Sorry, the provided input is incorrect. Please try again.\n");
         fflush(stdout);
         return;
@@ -50,6 +51,7 @@ void put_operation() {
     printf("Please insert here the data you would like to write on the device block.\n");
     fflush(stdout);
     fgets(source, source_size, stdin);
+    fgets(source, source_size, stdin);  //un po' strano che ci vogliano due fgets()
 
     ret = syscall(PUT_SYSCALL, source, size);
     if (ret < 0) {
@@ -91,7 +93,7 @@ void get_operation() {
     fflush(stdout);
     scanf("%lu", &size);
     //sanity check
-    if (size == -1) {   //corrisponde a if(size == MAX_VALUE_FOR_SIZE_T - 1)
+    if (size > INT_MAX) {
         printf("Sorry, the provided input is incorrect. Please try again.\n");
         fflush(stdout);
         return;
@@ -200,8 +202,7 @@ int main(int argc, char **argv) {
 
     while(1) {
 
-        printf("\033[2J\033[H");    //clean the shell
-        printf("*** Hi! What should I do for you? ***\n\n");
+        printf("\n\n*** Hi! What should I do for you? ***\n");
         printf("1) Write on a data block\n");
         printf("2) Read a data block\n");
         printf("3) Invalidate a data block\n");
