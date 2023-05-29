@@ -10,4 +10,7 @@ char *file_body[] = {
     "Come mi sono persa questa cosaaaaaaaaa"
 };
 
+//this is the superblock variable accessible by syscalls
+extern struct super_block *global_sb;
+
 #endif

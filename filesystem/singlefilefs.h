@@ -9,7 +9,7 @@
 #define MAGIC 0x42424242				//magic number: è un identificatore univoco nel filesystem
 #define DEFAULT_BLOCK_SIZE 4096			//dimensione di un blocco di memoria utilizzato dal filesystem
 #define SB_BLOCK_NUMBER 0				//numero di blocco del superblock
-#define DEFAULT_FILE_INODE_BLOCK 1
+#define DEFAULT_FILE_INODE_BLOCK 1		//numero di blocco dell'inode del file
 
 #define FILENAME_MAXLEN 255				//lunghezza massima del nome di un file
 

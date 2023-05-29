@@ -22,6 +22,7 @@ static struct dentry_operations singlefilefs_dentry_ops = {
 
 //qui iniziano le variabili globali definite direttamente da me
 struct mount_info m_info = {0};
+struct super_block *global_sb;
 
 //AUXILIAR FUNCTIONS PROTOTYPES
 int populate_rcu_list(struct list_head *, int);
@@ -86,13 +87,15 @@ int singlefilefs_fill_super(struct super_block *sb, void *data, int silent) {
     if (sizeof(struct onefilefs_sb_info) > DEFAULT_BLOCK_SIZE) {
         return -ENOMEM; //-ENOMEM = errore dovuto a una quantità di memoria a disposizione insufficiente
     }
+    //inizializzazione di global_sb
+    global_sb = sb;
 
     //unique identifier of the file system
     sb->s_magic = MAGIC;
 
     //lettura del superblocco del file ystem
-    bh = sb_getblk(sb, SB_BLOCK_NUMBER);    //TODO: forse da risostituire con sb_bread()
-    if (!sb){
+    bh = sb_bread(sb, SB_BLOCK_NUMBER);
+    if (!(sb && bh)){
 	    return -EIO;    //-EIO = errore di input/output
     }
     sb_disk = (struct onefilefs_sb_info *)bh->b_data;
@@ -110,7 +113,6 @@ int singlefilefs_fill_super(struct super_block *sb, void *data, int silent) {
     if (ret < 0) {
         return -ENOMEM; //-ENOMEM = errore di esaurimento della memoria
     }
-    //TODO: provare a stampare qui gli elementi della RCU list
 
     //inizializzazione (all'interno del superblocco) del campo di tipo struct mutex
     sb_disk->write_mutex = sb_mutex;

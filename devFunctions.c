@@ -1,5 +1,3 @@
-#include <linux/fdtable.h>
-#include <linux/file.h>
 #include <linux/fs.h>
 #include <linux/init.h>
 #include <linux/list.h>
@@ -12,6 +10,7 @@
 #include <linux/version.h>
 
 #include "filesystem/singlefilefs.h"
+#include "filesystem/singlefilefs_init.h"
 #include "filesystem/singlefilefs_ker.h"
 #include "devFunctions.h"
 #include "utils.c"
@@ -24,7 +23,7 @@ __SYSCALL_DEFINEx(2, _put_data, char *, source, size_t, size)
 asmlinkage int sys_put_data(char *source, size_t size)
 #endif
 {
-    struct onefilefs_sb_info *sb_struct;
+    struct onefilefs_sb_info *sb_disk;
 
     //sanity checks
     if (!m_info.is_mounted) {
@@ -42,8 +41,13 @@ asmlinkage int sys_put_data(char *source, size_t size)
 
     //TODO: capire se è sufficiente chiamare semplicemente una rcu_read_lock() e una rcu_read_unlock() nel caso in cui bisogna leggere solo dal dispositivo e non dalla RCU list.
     rcu_read_lock();
-    sb_struct = get_superblock_info();
+    sb_disk = get_superblock_info(global_sb);
     rcu_read_unlock();
+
+    if (sb_disk == NULL) {
+        printk("%s: impossibile eseguire la system call put_data(): si è verificato un errore col recupero dei dati del superblocco\n", MOD_NAME);
+        return -EIO; //-EIO = errore di input/output
+    }
 
     printk("%s: la system call put_data() è stata eseguita con successo\n", MOD_NAME);
     return 0;
@@ -56,15 +60,12 @@ __SYSCALL_DEFINEx(3, _get_data, int, offset, char *, destination, size_t, size)
 asmlinkage int sys_get_data(int offset, char *destination, size_t size)
 #endif
 {   
-    int i, ret;
-    struct onefilefs_sb_info *sb_struct;
-    struct list_head *head;
+    int index;                      //variabile che tiene traccia del numero di iterazione all'interno del ciclo che itera sulla RCU list
+    struct onefilefs_sb_info *sb_disk;
+    struct data_block_content *db_cont;
     struct rcu_node *curr_node;
-    int fd;                         //file descriptor da utilizzare per il nostro dispositivo ("image")
-    struct file *f;                 //struttura che descrive il nostro dispositivo
-    loff_t bytes_offset;            //valore (offset) che indica il punto del dispositivo da cui deve iniziare la lettura
-    loff_t *pos;                    //puntatore che indica il punto del dispositivo da cui deve iniziare la lettura
-    int bytes_read;
+    int readable_bytes;             //numero di byte effettivamente presentu nel blocco target prima del terminatore di stringa ('\0')
+    int lost_bytes_copy_to_user;    //numero di byte (tra quelli letti con kernel_read()) che non è stato possibile consegnare all'utente con copy_to_user()
 
     //sanity checks (notare che il caso size>DEFAULT_BLOCK_SIZE-METADATA_SIZE viene accettato e omologato al caso size==DEFAULT_BLOCK_SIZE-METADATA_SIZE)
     if (!m_info.is_mounted) {
@@ -78,14 +79,14 @@ asmlinkage int sys_get_data(int offset, char *destination, size_t size)
    
     //TODO: capire se è sufficiente chiamare semplicemente una rcu_read_lock() e una rcu_read_unlock() nel caso in cui bisogna leggere solo dal dispositivo e non dalla RCU list.
     rcu_read_lock();
-    sb_struct = get_superblock_info();
+    sb_disk = get_superblock_info(global_sb);
     rcu_read_unlock();
 
-    if (sb_struct == NULL) {
+    if (sb_disk == NULL) {
         printk("%s: impossibile eseguire la system call get_data(): si è verificato un errore col recupero dei dati del superblocco\n", MOD_NAME);
         return -EIO; //-EIO = errore di input/output
     }
-    if (offset < 0 || offset >= sb_struct->user_sb.total_data_blocks) {    //stiamo assumendo offset che vanno da 0 a NBLOCKS-1
+    if (offset < 0 || offset >= sb_disk->user_sb.total_data_blocks) {    //stiamo assumendo offset che vanno da 0 a NBLOCKS-1
         printk("%s: impossibile eseguire la system call get_data(): il blocco specificato (%d) non esiste\n", MOD_NAME, offset);
         return -EINVAL; //-EINVAL = parametri non validi (in questo caso int offset)
     }
@@ -95,17 +96,20 @@ asmlinkage int sys_get_data(int offset, char *destination, size_t size)
     }
 
     //sincronizzazione RCU per l'operazione di lettura
-    head = &(sb_struct->rcu_head);
     rcu_read_lock();
+    index = 0;
+    curr_node = NULL;
 
-    curr_node = get_first_data_block(head);
-    if (!curr_node) {
-        printk("%s: impossibile eseguire la system call get_data() a causa di un errore interno\n", MOD_NAME);
-        return -EFAULT; //-EFAULT = l'indirizzo usato non è corretto (in questo caso è nullo)
-    }
+    /* Costrutto che itera su tutti i nodi della RCU list
+     *@param curr_node: struct rcu_node che, a ogni iterazione del ciclo, tiene traccia del nodo corrente della RCU list
+     *@param &(sb_disk->rcu_head): puntatore alla list head dell'elemento artificiale del superblock
+     *@param lh: campo della struct rcu_node di tipo struct list_head
+     */
+    list_for_each_entry_rcu(curr_node, &(sb_disk->rcu_head), lh) {
+        if (index == offset+2)    //il +2 è dato dal fatto che bisogna contare anche superblocco e inode del file.
+            break;        
+        index++;
 
-    for(i=0; i<offset; i++) {
-        curr_node = list_next_or_null_rcu(head, &(curr_node->lh), struct rcu_node, lh);
     }
 
     //check sulla validità del blocco target
@@ -114,49 +118,28 @@ asmlinkage int sys_get_data(int offset, char *destination, size_t size)
         return -ENODATA; //-ENODATA = nessun dato disponibile
     }
 
-    //preparazione alla lettura effettiva del blocco
-    fd = get_unused_fd_flags(0);    //ottenimento di un file descriptor disponibile
-    if (fd < 0) {
-        printk("%s: impossibile eseguire la system call get_data(): si è verificato un errore nell'ottenimento di un file descriptor\n", MOD_NAME);
-        return -EIO;    //-EIO = errore di input/output
+    //recupero del contenuto del blocco da leggere
+    db_cont = get_block_content(global_sb, offset+2);   //il +2 è dato dal fatto che bisogna contare anche superblocco e inode del file.
+    if (db_cont == NULL) {
+        printk("%s: impossibile eseguire la system call get_data(): si è verificato un errore col recupero dei dati del blocco %d\n", MOD_NAME, offset);
+        return -EIO; //-EIO = errore di input/output
     }
-    f = filp_open(IMAGE_NAME, O_RDONLY, 0); //apertura del dispositivo in modalità sola lettura
-    if (IS_ERR(f)) {
-        printk("%s: impossibile eseguire la system call get_data(): si è verificato un errore nell'apertura del dispositivo\n", MOD_NAME);
-        return -EIO;    //-EIO = errore di input/output
-    }
-
-    /* Per ottenere l'offset iniziale, mi devo spostare di:
-     * 2+offset blocchi, che sono tutti quelli che precedono il target (compresi superblocco e inode del file)
-     * METADATA_SIZE byte, perché voglio leggere esclusivamente il payload
-     */
-    bytes_offset = (2+offset)*DEFAULT_BLOCK_SIZE + METADATA_SIZE;
-    pos = &bytes_offset;
-
-    //lettura effettiva del blocco
-    #if LINUX_VERSION_CODE >= KERNEL_VERSION(4,14,0)
-    ret = kernel_read(f, destination, size, pos);
-    #else
-    ret = vfs_read(f, destination, size, pos);
-    #endif
-    
-    if (ret < 0) {
-        printk("%s: impossibile eseguire la system call get_data(): si è verificato un errore durante la lettura del blocco %d\n", MOD_NAME, offset);
-        filp_close(f, NULL);
-        return -EIO;    //-EIO = errore di input/output
-    }
-
-    //clean up
-    filp_close(f, NULL);
-    rcu_read_unlock();
 
     //considero il numero di byte letti come la lunghezza della stringa letta (eventualmente fino a '\0'); in mancanza di '\0', verrà restituito ret.
-    bytes_read = (int)strnlen(destination, ret);
-    if (bytes_read < ret)
-        bytes_read++;   //strnlen() non conta l'eventuale '\0': lo aggiungo a mano.
+    readable_bytes = (int)strnlen(&(db_cont->payload[0]), size);
+    if (readable_bytes == 0) {
+        printk("%s: la system call get_data() è stata eseguita con successo ma non ci sono dati da leggere\n", MOD_NAME);
+        return 0;
+    }
+    else if (readable_bytes > 0 && readable_bytes < size)
+        readable_bytes++;   //strnlen() non conta l'eventuale '\0': lo aggiungo a mano.
 
+    //consegna dei dati all'utente
+    lost_bytes_copy_to_user = copy_to_user(destination, &(db_cont->payload[0]), readable_bytes);
+
+    rcu_read_unlock();
     printk("%s: la system call get_data() è stata eseguita con successo\n", MOD_NAME);
-    return bytes_read;
+    return readable_bytes - lost_bytes_copy_to_user;
 
 }
 
@@ -166,7 +149,7 @@ __SYSCALL_DEFINEx(1, _invalidate_data, int, offset)
 asmlinkage int sys_invalidate_data(int offset)
 #endif
 {
-    struct onefilefs_sb_info *sb_struct;
+    struct onefilefs_sb_info *sb_disk;
 
     //sanity checks
     if (!m_info.is_mounted) {
@@ -176,14 +159,14 @@ asmlinkage int sys_invalidate_data(int offset)
 
     //TODO: capire se è sufficiente chiamare semplicemente una rcu_read_lock() e una rcu_read_unlock() nel caso in cui bisogna leggere solo dal dispositivo e non dalla RCU list.
     rcu_read_lock();
-    sb_struct = get_superblock_info();
+    sb_disk = get_superblock_info(global_sb);
     rcu_read_unlock();
 
-    if (sb_struct == NULL) {
+    if (sb_disk == NULL) {
         printk("%s: impossibile eseguire la system call invalidate_data(): si è verificato un errore col recupero dei dati del superblocco\n", MOD_NAME);
         return -EIO; //-EIO = errore di input/output
     }
-    if (offset < 0 || offset >= sb_struct->user_sb.total_data_blocks) {    //stiamo assumendo offset che vanno da 0 a NBLOCKS-1
+    if (offset < 0 || offset >= sb_disk->user_sb.total_data_blocks) {    //stiamo assumendo offset che vanno da 0 a NBLOCKS-1
         printk("%s: impossibile eseguire la system call invalidate_data(): il blocco specificato (%d) non esiste\n", MOD_NAME, offset);
         return -EINVAL; //-EINVAL = parametri non validi (in questo caso int offset)
     }
