@@ -23,8 +23,10 @@ __SYSCALL_DEFINEx(2, _put_data, char *, source, size_t, size)
 asmlinkage int sys_put_data(char *source, size_t size)
 #endif
 {
+    int index;  //variabile che tiene traccia del numero di iterazione all'interno del ciclo che itera sulla RCU list; sarà il valore di ritorno della system call.
     struct onefilefs_sb_info *sb_disk;
     struct rcu_node *new_node;
+    struct rcu_node *curr_node;
 
     //sanity checks
     if (!au_info.is_mounted) {
@@ -40,16 +42,6 @@ asmlinkage int sys_put_data(char *source, size_t size)
         return -EINVAL; //-EINVAL = parametri non validi (in questo caso size_t size e/o char *source)
     }
 
-    //TODO: capire se è sufficiente chiamare semplicemente una rcu_read_lock() e una rcu_read_unlock() nel caso in cui bisogna leggere solo dal dispositivo e non dalla RCU list.
-    rcu_read_lock();
-    sb_disk = get_superblock_info(global_sb);
-    rcu_read_unlock();
-
-    if (sb_disk == NULL) {
-        printk("%s: impossibile eseguire la system call put_data(): si è verificato un errore col recupero dei dati del superblocco\n", MOD_NAME);
-        return -EIO; //-EIO = errore di input/output
-    }
-
     //creazione del nodo da inserire nella RCU list al posto di quello da modificare
     new_node = kmalloc(sizeof(struct rcu_node), GFP_KERNEL);
     if (!new_node) {
@@ -57,12 +49,42 @@ asmlinkage int sys_put_data(char *source, size_t size)
         return -ENOMEM; //-ENOMEM = errore di esaurimento della memoria 
     }
 
+    //sincronizzazione RCU per una lettura preliminare che recupera il superblocco e individua un eventuale blocco libero; è sufficiente scandire la RCU list senza leggere dati dal device.
+    rcu_read_lock();
+    sb_disk = get_superblock_info(global_sb);
+
+    if (sb_disk == NULL) {
+        printk("%s: impossibile eseguire la system call put_data(): si è verificato un errore col recupero dei dati del superblocco\n", MOD_NAME);
+        return -EIO; //-EIO = errore di input/output
+    }
+
+    index = 0;
+    curr_node = NULL;
+
+    /* Costrutto che itera su tutti i nodi della RCU list
+     *@param curr_node: struct rcu_node che, a ogni iterazione del ciclo, tiene traccia del nodo corrente della RCU list
+     *@param &(sb_disk->rcu_head): puntatore alla list head dell'elemento artificiale del superblock
+     *@param lh: campo della struct rcu_node di tipo struct list_head
+     */
+    list_for_each_entry_rcu(curr_node, &(sb_disk->rcu_head), lh) {
+        if (index >= 2 && !(curr_node->is_valid))    //sto cercando un blocco libero, ovvero un blocco non valido (index >= 2 perché non voglio il superblocco o l'inode del file).
+            break;      
+        index++;
+        if (index == sb_disk->rcu_head.total_data_blocks+2)  //sono andato oltre l'ultimo nodo della RCU list; significa che nessun nodo rispetta la condizione (nessun nodo è libero).
+            return -ENOMEM; //-ENOMEM = errore di esaurimento della memoria
+
+    }
+    rcu_read_unlock();
+
     //TODO: occhio alla sincronizzazione per quanto riguarda l'accesso a total_writes
-    
+
+    //utilizzo di mutex per sincronizzare le scritture tra loro
+    mutex_lock(&(au_info.write_mutex));
 
     //inizializzazione del nuovo nodo
-    //new_node->write_counter = 
+    //new_node->write_counter =   //l'ultimo write_counter e total_writes assumono lo stesso valore.
 
+    mutex_unlock(&(au_info.write_mutex));
     printk("%s: la system call put_data() è stata eseguita con successo\n", MOD_NAME);
     return 0;
 
@@ -90,11 +112,14 @@ asmlinkage int sys_get_data(int offset, char *destination, size_t size)
         printk("%s: impossibile eseguire la system call get_data(): non è stato specificato alcun buffer di destinazione\n", MOD_NAME);
         return -EINVAL; //-EINVAL = parametri non validi (in questo caso char *destination)
     }
-   
-    //TODO: capire se è sufficiente chiamare semplicemente una rcu_read_lock() e una rcu_read_unlock() nel caso in cui bisogna leggere solo dal dispositivo e non dalla RCU list.
+
+    if (size > DEFAULT_BLOCK_SIZE-METADATA_SIZE) {
+        size = DEFAULT_BLOCK_SIZE-METADATA_SIZE;    //in tal modo si leggono esclusivamente i dati posti nel blocco
+    }
+
+    //sincronizzazione RCU per recuperare il superblocco l'operazione di lettura del blocco dati di posizione offset
     rcu_read_lock();
     sb_disk = get_superblock_info(global_sb);
-    rcu_read_unlock();
 
     if (sb_disk == NULL) {
         printk("%s: impossibile eseguire la system call get_data(): si è verificato un errore col recupero dei dati del superblocco\n", MOD_NAME);
@@ -105,12 +130,6 @@ asmlinkage int sys_get_data(int offset, char *destination, size_t size)
         return -EINVAL; //-EINVAL = parametri non validi (in questo caso int offset)
     }
 
-    if (size > DEFAULT_BLOCK_SIZE-METADATA_SIZE) {
-        size = DEFAULT_BLOCK_SIZE-METADATA_SIZE;    //in tal modo si leggono esclusivamente i dati posti nel blocco
-    }
-
-    //sincronizzazione RCU per l'operazione di lettura
-    rcu_read_lock();
     index = 0;
     curr_node = NULL;
 
@@ -174,7 +193,6 @@ asmlinkage int sys_invalidate_data(int offset)
     //TODO: capire se è sufficiente chiamare semplicemente una rcu_read_lock() e una rcu_read_unlock() nel caso in cui bisogna leggere solo dal dispositivo e non dalla RCU list.
     rcu_read_lock();
     sb_disk = get_superblock_info(global_sb);
-    rcu_read_unlock();
 
     if (sb_disk == NULL) {
         printk("%s: impossibile eseguire la system call invalidate_data(): si è verificato un errore col recupero dei dati del superblocco\n", MOD_NAME);
@@ -185,6 +203,7 @@ asmlinkage int sys_invalidate_data(int offset)
         return -EINVAL; //-EINVAL = parametri non validi (in questo caso int offset)
     }
 
+    rcu_read_unlock();
     printk("%s: la system call invalidate_data() è stata eseguita con successo\n", MOD_NAME);
     return 0;
 
