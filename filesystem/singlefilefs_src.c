@@ -21,7 +21,7 @@ static struct dentry_operations singlefilefs_dentry_ops = {
 };
 
 //qui iniziano le variabili globali definite direttamente da me
-struct mount_info m_info = {0};
+struct auxiliary_info au_info = {0};
 struct super_block *global_sb;
 
 //AUXILIAR FUNCTIONS PROTOTYPES
@@ -77,7 +77,6 @@ int singlefilefs_fill_super(struct super_block *sb, void *data, int silent) {
     uint64_t magic;
 
     //qui iniziano le variabili locali definite direttamente da me
-    static DEFINE_MUTEX(sb_mutex);  //dichiarazione e definizione del mutex da aggiungere poi al superblocco del nostro dispositivo
     struct onefilefs_inode *inode_disk;
     int num_mounted_blocks;
     int num_expected_blocks;
@@ -113,9 +112,6 @@ int singlefilefs_fill_super(struct super_block *sb, void *data, int silent) {
     if (ret < 0) {
         return -ENOMEM; //-ENOMEM = errore di esaurimento della memoria
     }
-
-    //inizializzazione (all'interno del superblocco) del campo di tipo struct mutex
-    sb_disk->write_mutex = sb_mutex;
     brelse(bh);  //rilascio del buffer head bh
 
     //lettura dell'inode dell'unico file del file system
@@ -194,7 +190,7 @@ static void singlefilefs_kill_superblock(struct super_block *s) {
     //qui iniziano le variabili locali definite direttamente da me
     long unsigned int cmp_swap_output;
 
-    cmp_swap_output = __sync_val_compare_and_swap(&(m_info.is_mounted), 1, 0);
+    cmp_swap_output = __sync_val_compare_and_swap(&(au_info.is_mounted), 1, 0);
     if (cmp_swap_output != 1) { //caso in cui il file system non risultava montato
         printk("%s: impossible to unmount the file system\n", MOD_NAME);
         return;
@@ -213,9 +209,13 @@ struct dentry *singlefilefs_mount(struct file_system_type *fs_type, int flags, c
     struct dentry *ret;
 
     //qui iniziano le variabili locali definite direttamente da me
+    static DEFINE_MUTEX(w_mutex);  //dichiarazione e definizione del mutex
     long unsigned int cmp_swap_output;
 
-    cmp_swap_output = __sync_val_compare_and_swap(&(m_info.is_mounted), 0, 1);
+    //inizializzazione del campo di tipo struct mutex
+    au_info.write_mutex = w_mutex;
+
+    cmp_swap_output = __sync_val_compare_and_swap(&(au_info.is_mounted), 0, 1);
     if (cmp_swap_output != 0) { //caso in cui il file system era già montato
         printk("%s: singlefilefs was already mounted\n", MOD_NAME);
         return ERR_PTR(-EEXIST);    //-EEXIST = file system già esistente; uso ERR_PTR perché devo restituire un valore di tipo pointer.

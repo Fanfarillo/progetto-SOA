@@ -11,7 +11,6 @@
 struct onefilefs_sb_info {
 	struct onefilefs_sb_user_info user_sb;
 	struct list_head rcu_head;
-	struct mutex write_mutex;			//serve a sincronizzare gli scrittori tra loro (ma non coi lettori)
 };
 
 //data block (complete) definition
@@ -24,6 +23,11 @@ struct rcu_node {
 	unsigned int write_counter : 31;	//serve a stabilire il corretto ordinamento delle scritture sui blocchi; è un valore che parte da 1; è un campo a 31 bit.
 	unsigned int is_valid : 1;			//flag che indica se il blocco è valido o meno; è un campo a 1 bit.
 	struct list_head lh;
+};
+
+struct auxiliary_info {
+	uint64_t is_mounted;
+	struct mutex write_mutex;			//serve a sincronizzare gli scrittori tra loro (ma non coi lettori)
 };
 
 #endif

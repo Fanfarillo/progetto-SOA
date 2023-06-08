@@ -24,9 +24,10 @@ asmlinkage int sys_put_data(char *source, size_t size)
 #endif
 {
     struct onefilefs_sb_info *sb_disk;
+    struct rcu_node *new_node;
 
     //sanity checks
-    if (!m_info.is_mounted) {
+    if (!au_info.is_mounted) {
         printk("%s: impossibile eseguire la system call put_data(): il file system non è stato montato\n", MOD_NAME);
         return -ENODEV; //-ENODEV = file system non esistente
     }
@@ -49,6 +50,19 @@ asmlinkage int sys_put_data(char *source, size_t size)
         return -EIO; //-EIO = errore di input/output
     }
 
+    //creazione del nodo da inserire nella RCU list al posto di quello da modificare
+    new_node = kmalloc(sizeof(struct rcu_node), GFP_KERNEL);
+    if (!new_node) {
+        printk("%s: impossibile eseguire la system call put_data(): si è verificato un errore con l'allocazione della memoria\n", MOD_NAME);
+        return -ENOMEM; //-ENOMEM = errore di esaurimento della memoria 
+    }
+
+    //TODO: occhio alla sincronizzazione per quanto riguarda l'accesso a total_writes
+    
+
+    //inizializzazione del nuovo nodo
+    //new_node->write_counter = 
+
     printk("%s: la system call put_data() è stata eseguita con successo\n", MOD_NAME);
     return 0;
 
@@ -68,7 +82,7 @@ asmlinkage int sys_get_data(int offset, char *destination, size_t size)
     int lost_bytes_copy_to_user;    //numero di byte (tra quelli letti con kernel_read()) che non è stato possibile consegnare all'utente con copy_to_user()
 
     //sanity checks (notare che il caso size>DEFAULT_BLOCK_SIZE-METADATA_SIZE viene accettato e omologato al caso size==DEFAULT_BLOCK_SIZE-METADATA_SIZE)
-    if (!m_info.is_mounted) {
+    if (!au_info.is_mounted) {
         printk("%s: impossibile eseguire la system call get_data(): il file system non è stato montato\n", MOD_NAME);
         return -ENODEV; //-ENODEV = file system non esistente
     }
@@ -152,7 +166,7 @@ asmlinkage int sys_invalidate_data(int offset)
     struct onefilefs_sb_info *sb_disk;
 
     //sanity checks
-    if (!m_info.is_mounted) {
+    if (!au_info.is_mounted) {
         printk("%s: impossibile eseguire la system call invalidate_data(): il file system non è stato montato\n", MOD_NAME);
         return -ENODEV; //-ENODEV = file system non esistente
     }
@@ -200,7 +214,7 @@ static ssize_t dev_read(struct file *filp, char *buf, size_t len, loff_t *off) {
     printk("%s: read operation called with len %ld - and offset %lld (the current file size is %lld)",MOD_NAME, len, *off, file_size);
 
     //sanity checks
-    if (!m_info.is_mounted) {
+    if (!au_info.is_mounted) {
         printk("%s: impossibile leggere il dispositivo: il file system non è stato montato\n", MOD_NAME);
         return -ENODEV; //-ENODEV = file system non esistente
     }
@@ -247,7 +261,7 @@ static ssize_t dev_read(struct file *filp, char *buf, size_t len, loff_t *off) {
 static int dev_open(struct inode *inode, struct file *file) {
 
     //sanity checks
-    if (!m_info.is_mounted) {
+    if (!au_info.is_mounted) {
         printk("%s: impossibile aprire il dispositivo: il file system non è stato montato\n", MOD_NAME);
         return -ENODEV; //-ENODEV = file system non esistente
     }
@@ -265,7 +279,7 @@ static int dev_open(struct inode *inode, struct file *file) {
 static int dev_release(struct inode *inode, struct file *file) {
 
     //sanity checks
-    if (!m_info.is_mounted) {
+    if (!au_info.is_mounted) {
         printk("%s: impossibile chiudere il dispositivo: il file system non è stato montato\n", MOD_NAME);
         return -ENODEV; //-ENODEV = file system non esistente
     }

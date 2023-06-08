@@ -1,3 +1,3 @@
 #define IMAGE_NAME "image"
 
-extern struct mount_info m_info;
+extern struct auxiliary_info au_info;

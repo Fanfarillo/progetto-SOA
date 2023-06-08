@@ -50,11 +50,6 @@ struct onefilefs_sb_user_info {
 	unsigned int total_writes;	//contatore atomico globale del numero di scritture; corrisponde al numero d'ordine (write_counter) assegnato all'ultimo blocco scritto.
 };
 
-//qui iniziano le strutture aggiunte direttamente da me
-struct mount_info {
-	uint64_t is_mounted;
-};
-
 //file.c
 extern const struct inode_operations onefilefs_inode_ops;
 extern const struct file_operations fops;
