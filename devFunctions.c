@@ -23,7 +23,11 @@ __SYSCALL_DEFINEx(2, _put_data, char *, source, size_t, size)
 asmlinkage int sys_put_data(char *source, size_t size)
 #endif
 {
+    char *kernel_lvl_src;   //buffer di livello kernel (inizializzato con una copy_from_user()) in cui verrà posto l'input della put
+    size_t bytes_to_write;  //non è detto che size e la lunghezzaa di source corrispondano.
     int index;  //variabile che tiene traccia del numero di iterazione all'interno del ciclo che itera sulla RCU list; index-2 sarà il valore di ritorno della system call.
+    int ret;
+    unsigned long ulong_ret;    //serve specificatamente per la copy_from_user().
     struct onefilefs_sb_info *sb_disk;
     struct rcu_node *new_node;
     struct rcu_node *curr_node;
@@ -42,6 +46,19 @@ asmlinkage int sys_put_data(char *source, size_t size)
         printk("%s: impossibile eseguire la system call put_data(): non vi sono dati da scrivere\n", MOD_NAME);
         return -EINVAL; //-EINVAL = parametri non validi (in questo caso size_t size e/o char *source)
     }
+
+    //riporto in un buffer del kernel delle informazioni da scrivere su un blocco del dispositivo
+    bytes_to_write = strnlen(source, size);    //bytes_to_write determina la quantità di memoria da allocare per il kernel buffer in cui verrà posto l'input della put
+    if (bytes_to_write < size)
+        bytes_to_write++;   //strnlen() non conta l'eventuale '\0': lo aggiungo a mano.
+
+    kernel_lvl_src = kmalloc(bytes_to_write, GFP_KERNEL);
+    if (!kernel_lvl_src) {
+        printk("%s: impossibile eseguire la system call put_data(): si è verificato un errore con l'allocazione della memoria\n", MOD_NAME);
+        return -ENOMEM; //-ENOMEM = errore di esaurimento della memoria         
+    }
+    ulong_ret = copy_from_user(kernel_lvl_src, source, (unsigned long)bytes_to_write);  //ulong_ret è il numero di byte NON copiati (su un massimo di bytrs_to_write).
+    bytes_to_write = bytes_to_write - (size_t)ulong_ret;    //dai bytes_to_write togliamo i residui di copy_from_user().
 
     //creazione del nodo da inserire nella RCU list al posto di quello da modificare
     new_node = kmalloc(sizeof(struct rcu_node), GFP_KERNEL);
@@ -86,15 +103,26 @@ asmlinkage int sys_put_data(char *source, size_t size)
     //sostituzione di curr_node con new_node all'interno della RCU list
     list_replace_rcu(curr_node, new_node);
 
-    //TODO: definire e implementare queste due funzioni in utils.c
     //scrittura vera e propria del superblocco del dispositivo
-    set_superblock_info(global_sb, sb_disk, new_node->write_counter);
+    ret = set_superblock_info(global_sb, new_node->write_counter);
+    if (ret < 0) {
+        printk("%s: impossibile eseguire la system call put_data(): si è verificato un errore con la scrittura dei dati sul superblocco\n", MOD_NAME);
+        return -EIO; //-EIO = errore di input/output        
+    }
+
     //scrittura vera e propria del blocco all'interno del dispositivo (metadati+payload)
-    set_block_content(global_sb, index, new_node->write_counter, source, size);
+    ret = set_block_content(global_sb, index, new_node->write_counter, kernel_lvl_src, bytes_to_write);
+    if (ret < 0) {
+        printk("%s: impossibile eseguire la system call put_data(): si è verificato un errore con la scrittura dei dati sul blocco %d\n", MOD_NAME, index-2);
+        return -EIO; //-EIO = errore di input/output        
+    }
 
     mutex_unlock(&(au_info.write_mutex));
+    synchronize_rcu();  //funzione che serve a far sì che lo scrittore attenda la terminazione del grace period
+    kfree(curr_node);
+
     printk("%s: la system call put_data() è stata eseguita con successo\n", MOD_NAME);
-    return 0;
+    return index-2;
 
 }
 
