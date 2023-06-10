@@ -75,6 +75,8 @@ asmlinkage int sys_put_data(char *source, size_t size)
     sb_disk = get_superblock_info(global_sb);
     if (sb_disk == NULL) {
         printk("%s: impossibile eseguire la system call put_data(): si è verificato un errore col recupero dei dati del superblocco\n", MOD_NAME);
+        mutex_unlock(&(au_info.write_mutex));
+        rcu_read_unlock();
         return -EIO; //-EIO = errore di input/output
     }
 
@@ -87,12 +89,17 @@ asmlinkage int sys_put_data(char *source, size_t size)
      *@param &(sb_disk->rcu_head): puntatore alla list head dell'elemento artificiale del superblock
      *@param lh: campo della struct rcu_node di tipo struct list_head
      */
-    list_for_each_entry_rcu(curr_node, &(sb_disk->rcu_head), lh) {
+    list_for_each_entry_rcu(curr_node, &(sb_disk->rcu_head), lh) {        
         if (index >= 2 && !(curr_node->is_valid))    //sto cercando un blocco libero, ovvero un blocco non valido (index >= 2 perché non voglio il superblocco o l'inode del file).
-            break;      
+            break;
+
         index++;
-        if (index == sb_disk->rcu_head.total_data_blocks+2)  //sono andato oltre l'ultimo nodo della RCU list; significa che nessun nodo rispetta la condizione (nessun nodo è libero).
+        if (index == sb_disk->user_sb.total_data_blocks+2) {  //sono andato oltre l'ultimo nodo della RCU list; significa che nessun nodo rispetta la condizione (nessun nodo è libero).
+            printk("%s: impossibile eseguire la system call put_data(): non ci sono blocchi liberi\n", MOD_NAME);
+            mutex_unlock(&(au_info.write_mutex));
+            rcu_read_unlock();
             return -ENOMEM; //-ENOMEM = errore di esaurimento della memoria
+        }
 
     }
     rcu_read_unlock();
@@ -101,12 +108,13 @@ asmlinkage int sys_put_data(char *source, size_t size)
     new_node->write_counter = old_total_writes+1; //l'ultimo write_counter e total_writes assumono lo stesso valore: il nuovo write_counter deve essere pari a old_total_writes+1
     new_node->is_valid = 1;
     //sostituzione di curr_node con new_node all'interno della RCU list
-    list_replace_rcu(curr_node, new_node);
+    list_replace_rcu(&(curr_node->lh), &(new_node->lh));
 
     //scrittura vera e propria del superblocco del dispositivo
     ret = set_superblock_info(global_sb, new_node->write_counter);
     if (ret < 0) {
         printk("%s: impossibile eseguire la system call put_data(): si è verificato un errore con la scrittura dei dati sul superblocco\n", MOD_NAME);
+        mutex_unlock(&(au_info.write_mutex));
         return -EIO; //-EIO = errore di input/output        
     }
 
@@ -114,6 +122,7 @@ asmlinkage int sys_put_data(char *source, size_t size)
     ret = set_block_content(global_sb, index, new_node->write_counter, kernel_lvl_src, bytes_to_write);
     if (ret < 0) {
         printk("%s: impossibile eseguire la system call put_data(): si è verificato un errore con la scrittura dei dati sul blocco %d\n", MOD_NAME, index-2);
+        mutex_unlock(&(au_info.write_mutex));
         return -EIO; //-EIO = errore di input/output        
     }
 
@@ -159,10 +168,12 @@ asmlinkage int sys_get_data(int offset, char *destination, size_t size)
     sb_disk = get_superblock_info(global_sb);
     if (sb_disk == NULL) {
         printk("%s: impossibile eseguire la system call get_data(): si è verificato un errore col recupero dei dati del superblocco\n", MOD_NAME);
+        rcu_read_unlock();
         return -EIO; //-EIO = errore di input/output
     }
     if (offset < 0 || offset >= sb_disk->user_sb.total_data_blocks) {    //stiamo assumendo offset che vanno da 0 a NBLOCKS-1
         printk("%s: impossibile eseguire la system call get_data(): il blocco specificato (%d) non esiste\n", MOD_NAME, offset);
+        rcu_read_unlock();
         return -EINVAL; //-EINVAL = parametri non validi (in questo caso int offset)
     }
 
@@ -184,6 +195,7 @@ asmlinkage int sys_get_data(int offset, char *destination, size_t size)
     //check sulla validità del blocco target
     if(!(curr_node->is_valid)) {
         printk("%s: impossibile eseguire la system call get_data(): il blocco specificato (%d) non è valido\n", MOD_NAME, offset);
+        rcu_read_unlock();
         return -ENODATA; //-ENODATA = nessun dato disponibile
     }
 
@@ -191,6 +203,7 @@ asmlinkage int sys_get_data(int offset, char *destination, size_t size)
     db_cont = get_block_content(global_sb, offset+2);   //il +2 è dato dal fatto che bisogna contare anche superblocco e inode del file.
     if (db_cont == NULL) {
         printk("%s: impossibile eseguire la system call get_data(): si è verificato un errore col recupero dei dati del blocco %d\n", MOD_NAME, offset);
+        rcu_read_unlock();
         return -EIO; //-EIO = errore di input/output
     }
 
@@ -198,6 +211,7 @@ asmlinkage int sys_get_data(int offset, char *destination, size_t size)
     readable_bytes = (int)strnlen(&(db_cont->payload[0]), size);
     if (readable_bytes == 0) {
         printk("%s: la system call get_data() è stata eseguita con successo ma non ci sono dati da leggere\n", MOD_NAME);
+        rcu_read_unlock();
         return 0;
     }
     else if (readable_bytes > 0 && readable_bytes < size)
