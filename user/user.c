@@ -123,7 +123,7 @@ void put_operation() {
         fflush(stdout);
     }
     else {
-        printf("INDEX OF WRITTEN BLOCK: %d\nPress Enter to continue...", ret);
+        printf("INDEX OF WRITTEN BLOCK: %d\nPress Enter to continue...\n", ret);
         fflush(stdout);
     }
 
@@ -191,7 +191,7 @@ void get_operation() {
     }
     else {
         printf("READ DATA: %s\n", destination);
-        printf("NUMBER OF READ BYTES: %d\nPress Enter to continue...", ret);
+        printf("NUMBER OF READ BYTES: %d\nPress Enter to continue...\n", ret);
         fflush(stdout);
     }
 
