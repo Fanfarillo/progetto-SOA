@@ -16,6 +16,7 @@ struct onefilefs_sb_info *get_superblock_info(struct super_block *);
 struct data_block_content *get_block_content(struct super_block *, int);
 int set_superblock_info(struct super_block *, unsigned int);
 int set_block_content(struct super_block *, int, unsigned int, char *, size_t);
+int invalidate_block_content(struct super_block *, int);
 
 //questa funzione restituisce il puntatore alla struttura dati che comprende le informazioni contenute nel superblocco del dispositivo.
 struct onefilefs_sb_info *get_superblock_info(struct super_block *global_sb) {
@@ -105,5 +106,29 @@ int set_block_content(struct super_block *global_sb, int block_num, unsigned int
     //rilascio del buffer head bh
     brelse(bh);
     return 0;
+
+}
+
+//questa funzione marca uno specifico blocco all'interno del dispositivo come invalido
+int invalidate_block_content(struct super_block *global_sb, int block_num) {
+
+    struct buffer_head *bh;
+    struct data_block_content *new_db_cont;
+    unsigned int numeric_metadata;  //metadati del blocco da scrivere (sottoforma di unsigned int)
+
+    bh = sb_bread(global_sb, block_num);
+    if (!(global_sb && bh)) {
+        return -1;  //error condition
+    }
+
+    new_db_cont = (struct data_block_content *)bh->b_data;
+    numeric_metadata = new_db_cont->metadata - 1;   //in questo modo sto settando l'ultimo bit dei metadati del blocco (i.e. il bit di validità) a 0
+    new_db_cont->metadata = numeric_metadata;
+
+    //segnalazione al SO che il superblocco è stato modificato e che le modifiche devono essere sincronizzate col device sottostante
+    mark_buffer_dirty(bh);
+    //rilascio del buffer head bh
+    brelse(bh);
+    return 0;    
 
 }
