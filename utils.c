@@ -72,6 +72,12 @@ int set_superblock_info(struct super_block *global_sb, unsigned int new_total_wr
 
     //segnalazione al SO che il superblocco è stato modificato e che le modifiche devono essere sincronizzate col device sottostante
     mark_buffer_dirty(bh);
+
+    //se non si vuole utilizzare il page-cache write back daemon, la scrittura del superblocco viene riportata nel device in maniera sincrona
+    #ifdef SYNC
+    sync_dirty_buffer(bh);
+    #endif
+
     //rilascio del buffer head bh
     brelse(bh);
     return 0;
@@ -103,6 +109,12 @@ int set_block_content(struct super_block *global_sb, int block_num, unsigned int
 
     //segnalazione al SO che il superblocco è stato modificato e che le modifiche devono essere sincronizzate col device sottostante
     mark_buffer_dirty(bh);
+
+    //se non si vuole utilizzare il page-cache write back daemon, la scrittura del blocco viene riportata nel device in maniera sincrona
+    #ifdef SYNC
+    sync_dirty_buffer(bh);
+    #endif
+
     //rilascio del buffer head bh
     brelse(bh);
     return 0;
@@ -127,6 +139,12 @@ int invalidate_block_content(struct super_block *global_sb, int block_num) {
 
     //segnalazione al SO che il superblocco è stato modificato e che le modifiche devono essere sincronizzate col device sottostante
     mark_buffer_dirty(bh);
+
+    //se non si vuole utilizzare il page-cache write back daemon, la scrittura del blocco viene riportata nel device in maniera sincrona
+    #ifdef SYNC
+    sync_dirty_buffer(bh);
+    #endif
+
     //rilascio del buffer head bh
     brelse(bh);
     return 0;    
