@@ -156,6 +156,7 @@ int invalidate_block_content(struct super_block *global_sb, int block_num) {
 //questa funzione aggiunge un nodo alla lista collegata che serve per effettuare le letture dei blocchi in ordine di 'write_counter'.
 int add_sorted_node(int offset, unsigned int write_counter, struct sorted_node *first_sorted_node) {
 
+    struct sorted_node *prev_sorted_node;
     struct sorted_node *curr_sorted_node;
     struct sorted_node *new_sorted_node;
 
@@ -173,9 +174,32 @@ int add_sorted_node(int offset, unsigned int write_counter, struct sorted_node *
         return 0;
     }
 
+    prev_sorted_node = NULL;
     curr_sorted_node = first_sorted_node;
+
     while(curr_sorted_node != NULL) {
-        //TODO
+        if (new_sorted_node->write_counter < curr_sorted_node) {
+
+            if (prev_sorted_node == NULL) { //caso in cui new_sorted_node sarà il primo nodo della lista collegata di struct sorted_node
+                new_sorted_node->next = first_sorted_node;
+                first_sorted_node = new_sorted_node;
+            }
+            else {
+                prev_sorted_node->next = new_sorted_node;
+                new_sorted_node->next = curr_sorted_node;
+            }
+            break;
+
+        }
+        else if (curr_sorted_node->next == NULL) {  //caso in cui new_sorted_node sarà l'ultimo nodo della lista collegata di struct sorted_node
+            curr_sorted_node->next = new_sorted_node;
+            new_sorted_node->next = NULL;
+            break;
+        }
+
+        prev_sorted_node = curr_sorted_node;
+        curr_sorted_node = curr_sorted_node->next;
+
     }
 
     return 0;

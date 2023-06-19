@@ -383,7 +383,7 @@ static ssize_t dev_read(struct file *filp, char *buf, size_t len, loff_t *off) {
      */
     list_for_each_entry_rcu(curr_rcu_node, &(sb_disk->rcu_head), lh) {
 
-        if (curr_rcu_node->is_valid && curr_rcu_node->write_counter > 0) {  //curr_rcu_node->write_counter > 0 esclude superblocco e inode.
+        if (curr_rcu_node->is_valid && curr_rcu_node->write_counter > 0) {  //la condizione curr_rcu_node->write_counter > 0 esclude superblocco e inode.
 
             ret = add_sorted_node(index-2, curr_rcu_node->write_counter, first_sorted_node);    //index-2 perché considero il primo blocco dati a offset 0 e così via
             if (ret < 0) {
@@ -397,6 +397,8 @@ static ssize_t dev_read(struct file *filp, char *buf, size_t len, loff_t *off) {
         index++;
 
     }
+
+    //TODO: kfree() di tutti i nodi della lista di struct sorted_node
 
 
     //check that *off is within boundaries of file size
