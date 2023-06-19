@@ -329,28 +329,75 @@ static int dev_open(struct inode *, struct file *);
 static int dev_release(struct inode *, struct file *);
 
 //la dev_read() legge i dati dal blocco del dispositivo corrispondente alla posizione indicata dall'offset off.
+//RETURN 0, cosicché poi dev_read() non venga più invocata (mi occuperò di leggere tutti i blocchi in un ciclo definito qui).
 static ssize_t dev_read(struct file *filp, char *buf, size_t len, loff_t *off) {
 
-    struct buffer_head *bh = NULL;
-    struct inode * the_inode = filp->f_inode;
-    uint64_t file_size = the_inode->i_size;
+    struct buffer_head *bh;
+    struct inode *the_inode;
+    uint64_t file_size;
     int ret;
     loff_t offset;
-    int block_to_read;//index of the block to be read from device
+    int block_to_read;  //index of the block to be read from device
 
-    printk("%s: read operation called with len %ld - and offset %lld (the current file size is %lld)",MOD_NAME, len, *off, file_size);
+    //qui iniziano le variabili definite da me
+    struct onefilefs_sb_info *sb_disk;
+    int index;  //tiene traccia dell'indice di ciascun nodo della RCU list.
+    struct rcu_node *curr_rcu_node;
+    struct sorted_node *first_sorted_node;
+
+    bh = NULL;
+    the_inode = filp->f_inode;
+    file_size = the_inode->i_size;
+
+    printk("%s: read operation called with len %ld - and offset %lld (the current file size is %lld)", MOD_NAME, len, *off, file_size);
 
     //sanity checks
     if (!au_info.is_mounted) {
         printk("%s: impossibile leggere il dispositivo: il file system non è stato montato\n", MOD_NAME);
         return -ENODEV; //-ENODEV = file system non esistente
     }
+    if (*off > 0) {
+        printk("%s: è necessario leggere l'intero dispositivo, per cui il valore atteso di *off è 0. Invece, nella realtà, *off è pari a %lld\n", MOD_NAME, *off);
+        return -EINVAL; //-EINVAL = parametri non validi (in questo caso loff_t *off)
+    }
 
-    //QUI INIZIA IL CODICE FORNITO DAL PROFESSORE
+    //recupero il superblocco perché mi serve per ottenere la RCU list.
+    rcu_read_lock();
+    sb_disk = get_superblock_info(global_sb);
 
-    //this operation is not synchronized 
-    //param *off can be changed concurrently 
-    //add synchronization if you need it for any reason
+    if (sb_disk == NULL) {
+        printk("%s: impossibile leggere il dispositivo: si è verificato un errore col recupero dei dati del superblocco\n", MOD_NAME);
+        rcu_read_unlock();
+        return -EIO; //-EIO = errore di input/output
+    }
+
+    //all'interno di un ciclo costruisco una lista collegata che mantiene gli offset dei soli blocchi validi in ordine di 'write_counter'.
+    index = 0;
+    curr_rcu_node = NULL;
+    first_sorted_node = NULL;
+
+    /* Costrutto che itera su tutti i nodi della RCU list
+     *@param curr_node: struct rcu_node che, a ogni iterazione del ciclo, tiene traccia del nodo corrente della RCU list
+     *@param &(sb_disk->rcu_head): puntatore alla list head dell'elemento artificiale del superblock
+     *@param lh: campo della struct rcu_node di tipo struct list_head
+     */
+    list_for_each_entry_rcu(curr_rcu_node, &(sb_disk->rcu_head), lh) {
+
+        if (curr_rcu_node->is_valid && curr_rcu_node->write_counter > 0) {  //curr_rcu_node->write_counter > 0 esclude superblocco e inode.
+
+            ret = add_sorted_node(index-2, curr_rcu_node->write_counter, first_sorted_node);    //index-2 perché considero il primo blocco dati a offset 0 e così via
+            if (ret < 0) {
+                printk("%s: impossibile leggere il dispositivo: si è verificato un errore con l'allocazione della memoria %d\n", MOD_NAME);
+                rcu_read_unlock();
+                return -EIO; //-EIO = errore di input/output            
+            }
+
+        }
+
+        index++;
+
+    }
+
 
     //check that *off is within boundaries of file size
     if (*off >= file_size)
@@ -358,14 +405,17 @@ static ssize_t dev_read(struct file *filp, char *buf, size_t len, loff_t *off) {
     else if (*off + len > file_size)
         len = file_size - *off;
 
-    //determine the block level offset for the operation
-    offset = *off % DEFAULT_BLOCK_SIZE; 
-    //just read stuff in a single block - residuals will be managed at the applicatin level
+    //determine the block level offset for the operation; if offset falls into metadata, then initialize offset = METADATA_SIZE.
+    offset = *off % DEFAULT_BLOCK_SIZE;
+    if (offset < METADATA_SIZE)
+        offset = METADATA_SIZE;
+
+    //just read stuff in a single block - residuals will be managed at the application level
     if (offset + len > DEFAULT_BLOCK_SIZE)
         len = DEFAULT_BLOCK_SIZE - offset;
 
     //compute the actual index of the the block to be read from device
-    block_to_read = *off / DEFAULT_BLOCK_SIZE + 2; //the value 2 accounts for superblock and file-inode on device (block 0 & block 1)
+    block_to_read = *off/DEFAULT_BLOCK_SIZE + 2; //the value 2 accounts for superblock and file-inode on device (block 0 & block 1)
     
     printk("%s: read operation must access block %d of the device", MOD_NAME, block_to_read);
 
@@ -375,7 +425,7 @@ static ssize_t dev_read(struct file *filp, char *buf, size_t len, loff_t *off) {
 	    return -EIO;
     }
     //ora si copiano i dati dal buffer del kernel (bh->b_data+offset) al buffer dell'applicazione (buf), passato come parametro a onefilefs_read().
-    ret = copy_to_user(buf,bh->b_data + offset, len);
+    ret = copy_to_user(buf, bh->b_data + offset, len);
     *off += (len - ret);
     brelse(bh);
 

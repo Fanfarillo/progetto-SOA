@@ -18,6 +18,8 @@ int set_superblock_info(struct super_block *, unsigned int);
 int set_block_content(struct super_block *, int, unsigned int, char *, size_t);
 int invalidate_block_content(struct super_block *, int);
 
+int add_sorted_node(int, unsigned int, struct sorted_node *);
+
 //questa funzione restituisce il puntatore alla struttura dati che comprende le informazioni contenute nel superblocco del dispositivo.
 struct onefilefs_sb_info *get_superblock_info(struct super_block *global_sb) {
 
@@ -148,5 +150,34 @@ int invalidate_block_content(struct super_block *global_sb, int block_num) {
     //rilascio del buffer head bh
     brelse(bh);
     return 0;    
+
+}
+
+//questa funzione aggiunge un nodo alla lista collegata che serve per effettuare le letture dei blocchi in ordine di 'write_counter'.
+int add_sorted_node(int offset, unsigned int write_counter, struct sorted_node *first_sorted_node) {
+
+    struct sorted_node *curr_sorted_node;
+    struct sorted_node *new_sorted_node;
+
+    new_sorted_node = kmalloc(sizeof(struct sorted_node), GFP_KERNEL);
+    if (!new_sorted_node) {
+        return -1;  //error condition
+    }
+
+    new_sorted_node->node_offset = offset;
+    new_sorted_node->write_counter = write_counter;
+
+    //ciclo in cui navigo la lista collegata per stabilire la posizione corretta in cui inserire il nuovo nodo; se first_sorted_node == NULL, però, si tratta del primo nodo.
+    if (first_sorted_node == NULL) {
+        first_sorted_node = new_sorted_node;
+        return 0;
+    }
+
+    curr_sorted_node = first_sorted_node;
+    while(curr_sorted_node != NULL) {
+        //TODO
+    }
+
+    return 0;
 
 }

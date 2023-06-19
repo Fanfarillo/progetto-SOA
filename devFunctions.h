@@ -6,4 +6,10 @@
 
 extern struct auxiliary_info au_info;
 
+struct sorted_node {
+    int node_offset;
+    unsigned int write_counter;
+    struct sorted_node *next;
+};
+
 #endif
