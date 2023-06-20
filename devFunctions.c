@@ -1,5 +1,6 @@
 #include <linux/fs.h>
 #include <linux/init.h>
+#include <linux/kernel.h>
 #include <linux/list.h>
 #include <linux/module.h>
 #include <linux/mutex.h>
@@ -15,7 +16,8 @@
 #include "devFunctions.h"
 #include "utils.c"
 
-//TODO: verificare che all'interno dei data block i metadati siano stati scritti correttamente.
+struct sorted_node *first_sorted_node;
+
 //SYSTEM CALLS
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4,17,0)
 __SYSCALL_DEFINEx(2, _put_data, char *, source, size_t, size)
@@ -330,7 +332,6 @@ static int dev_release(struct inode *, struct file *);
 
 /* La dev_read() legge i dati dal blocco del dispositivo corrispondente alla posizione indicata dall'offset off.
  * RETURN 0, cosicché poi dev_read() non venga più invocata (mi occuperò di leggere tutti i blocchi in un ciclo definito qui).
- * Non viene implementato alcun meccanismo di sincronizzazione specifico per il parametro loff_t *off perché non viene mai aggiornato.
  */
 static ssize_t dev_read(struct file *filp, char *buf, size_t len, loff_t *off) {
 
@@ -345,73 +346,68 @@ static ssize_t dev_read(struct file *filp, char *buf, size_t len, loff_t *off) {
     struct onefilefs_sb_info *sb_disk;
     int index;  //tiene traccia dell'indice di ciascun nodo della RCU list.
     struct rcu_node *curr_rcu_node;
-    struct sorted_node *first_sorted_node;
     struct sorted_node *prev_sorted_node;
-    struct sorted_node *curr_sorted_node;
 
     bh = NULL;
     the_inode = filp->f_inode;
     file_size = the_inode->i_size;
 
-    printk("%s: read operation called with len %ld - and offset %lld (the current file size is %lld)", MOD_NAME, len, *off, file_size);
-
-    //sanity checks
+    //sanity check
     if (!au_info.is_mounted) {
         printk("%s: impossibile leggere il dispositivo: il file system non è stato montato\n", MOD_NAME);
         return -ENODEV; //-ENODEV = file system non esistente
     }
-    if (*off > 0) {
-        printk("%s: è necessario leggere l'intero dispositivo, per cui il valore atteso di *off è 0. Invece, nella realtà, *off è pari a %lld\n", MOD_NAME, *off);
-        return -EINVAL; //-EINVAL = parametri non validi (in questo caso loff_t *off)
-    }
 
-    //recupero il superblocco perché mi serve per ottenere la RCU list.
-    rcu_read_lock();
-    sb_disk = get_superblock_info(global_sb);
+    if (*off == 0) {    //caso in cui la lettura deve ancora iniziare (è qui che viene inizializzata la lista collegata dei nodi ordinati)
+        //blocco off_mutex, il quale mi serve per bloccare anche gli accessi alla sorted list
+        mutex_lock(&(au_info.off_mutex));
 
-    if (sb_disk == NULL) {
-        printk("%s: impossibile leggere il dispositivo: si è verificato un errore col recupero dei dati del superblocco\n", MOD_NAME);
-        rcu_read_unlock();
-        return -EIO; //-EIO = errore di input/output
-    }
+        //recupero il superblocco perché mi serve per ottenere la RCU list.
+        rcu_read_lock();
+        sb_disk = get_superblock_info(global_sb);
 
-    //all'interno di un ciclo costruisco una lista collegata che mantiene gli offset dei soli blocchi validi in ordine di 'write_counter'.
-    index = 0;
-    curr_rcu_node = NULL;
-    first_sorted_node = NULL;
+        if (sb_disk == NULL) {
+            printk("%s: impossibile leggere il dispositivo: si è verificato un errore col recupero dei dati del superblocco\n", MOD_NAME);
+            rcu_read_unlock();
+            return -EIO; //-EIO = errore di input/output
+        }
 
-    /* Costrutto che itera su tutti i nodi della RCU list
-     *@param curr_node: struct rcu_node che, a ogni iterazione del ciclo, tiene traccia del nodo corrente della RCU list
-     *@param &(sb_disk->rcu_head): puntatore alla list head dell'elemento artificiale del superblock
-     *@param lh: campo della struct rcu_node di tipo struct list_head
-     */
-    list_for_each_entry_rcu(curr_rcu_node, &(sb_disk->rcu_head), lh) {
+        //all'interno di un ciclo costruisco una lista collegata che mantiene gli offset dei soli blocchi validi in ordine di 'write_counter'.
+        index = 0;
+        curr_rcu_node = NULL;
+        first_sorted_node = NULL;
 
-        if (curr_rcu_node->is_valid && curr_rcu_node->write_counter > 0) {  //la condizione curr_rcu_node->write_counter > 0 esclude superblocco e inode.
+        /* Costrutto che itera su tutti i nodi della RCU list
+        *@param curr_node: struct rcu_node che, a ogni iterazione del ciclo, tiene traccia del nodo corrente della RCU list
+        *@param &(sb_disk->rcu_head): puntatore alla list head dell'elemento artificiale del superblock
+        *@param lh: campo della struct rcu_node di tipo struct list_head
+        */
+        list_for_each_entry_rcu(curr_rcu_node, &(sb_disk->rcu_head), lh) {
 
-            ret = add_sorted_node(index, curr_rcu_node->write_counter, &first_sorted_node);    //considero il primo blocco dati a offset 2 e così via
-            if (ret < 0) {
-                printk("%s: impossibile leggere il dispositivo: si è verificato un errore con l'allocazione della memoria\n", MOD_NAME);
-                rcu_read_unlock();
-                return -EIO; //-EIO = errore di input/output            
+            if (curr_rcu_node->is_valid && curr_rcu_node->write_counter > 0) {  //la condizione curr_rcu_node->write_counter > 0 esclude superblocco e inode.
+
+                ret = add_sorted_node(index, curr_rcu_node->write_counter, &first_sorted_node);    //considero il primo blocco dati a offset 2 e così via
+                if (ret < 0) {
+                    printk("%s: impossibile leggere il dispositivo: si è verificato un errore con l'allocazione della memoria\n", MOD_NAME);
+                    rcu_read_unlock();
+                    return -EIO; //-EIO = errore di input/output            
+                }
+
             }
+            index++;
 
         }
 
-        index++;
+        *off = (loff_t)file_size;   //segnalo il fatto che la sorted list è stata già messa in piedi per la lettura corrente.
 
     }
 
-    offset = METADATA_SIZE;             //l'offset da cui far partire ciascuna lettura di un singolo blocco deve partire dalla fine dei metadati.
-    len = DEFAULT_BLOCK_SIZE - offset;  //il numero di byte da leggere a ogni iterazione è pari al numero di byte di payload di un singolo blocco.
-    
-    prev_sorted_node = NULL;
-    curr_sorted_node = first_sorted_node;
-
-    //ciclo in cui vengono consegnati in ordine i dati inclusi nei blocchi validi
-    while(curr_sorted_node != NULL) {
+    if (first_sorted_node != NULL) {        //caso in cui ci sono ancora dei dati da leggere
+        offset = METADATA_SIZE;             //l'offset da cui far partire ciascuna lettura di un singolo blocco deve partire dalla fine dei metadati.
+        len = DEFAULT_BLOCK_SIZE - offset;  //il numero di byte da leggere a ogni iterazione è pari al numero di byte di payload di un singolo blocco.
+        prev_sorted_node = NULL;
         
-        block_to_read = curr_sorted_node->node_index;
+        block_to_read = first_sorted_node->node_index;
         printk("%s: read operation must access block %d of the device", MOD_NAME, block_to_read);
 
         //sb_read acquisisce il contenuto del blocco da leggere (quello di cui abbiamo appena calcolato l'indice).
@@ -425,20 +421,23 @@ static ssize_t dev_read(struct file *filp, char *buf, size_t len, loff_t *off) {
         //ora si copiano i dati dal buffer del kernel (bh->b_data+offset) al buffer dell'applicazione (buf), passato come parametro a onefilefs_read().
         ret = copy_to_user(buf, bh->b_data + offset, len);
         brelse(bh);
-        printk("%s: block %d successfully read\n", MOD_NAME, block_to_read);
 
-        prev_sorted_node = curr_sorted_node;
-        curr_sorted_node = curr_sorted_node->next;  //prossimo blocco da leggere
+        prev_sorted_node = first_sorted_node;
+        first_sorted_node = first_sorted_node->next;  //prossimo blocco da leggere
 
         //kfree() del nodo appena attraversato poiché non serve più
-        first_sorted_node = curr_sorted_node;
         kfree(prev_sorted_node);
-    
-    }
 
-    rcu_read_unlock();
-    printk("%s: device successfully read\n", MOD_NAME);
-    return 0;
+        printk("%s: block %d successfully read\n", MOD_NAME, block_to_read);        
+        return len-ret;
+
+    }
+    else {  //caso in cui la lettura è stata completata
+        rcu_read_unlock();
+        mutex_unlock(&(au_info.off_mutex));
+        return 0;
+
+    }
 
 }
 

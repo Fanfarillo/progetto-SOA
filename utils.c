@@ -178,7 +178,7 @@ int add_sorted_node(int index, unsigned int write_counter, struct sorted_node **
     curr_sorted_node = *first_sorted_node_ptr;
 
     while(curr_sorted_node != NULL) {
-        if (new_sorted_node->write_counter < curr_sorted_node) {
+        if (new_sorted_node->write_counter < curr_sorted_node->write_counter) {
 
             if (prev_sorted_node == NULL) { //caso in cui new_sorted_node sarà il primo nodo della lista collegata di struct sorted_node
                 new_sorted_node->next = *first_sorted_node_ptr;

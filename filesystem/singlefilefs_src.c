@@ -209,11 +209,13 @@ struct dentry *singlefilefs_mount(struct file_system_type *fs_type, int flags, c
     struct dentry *ret;
 
     //qui iniziano le variabili locali definite direttamente da me
-    static DEFINE_MUTEX(w_mutex);  //dichiarazione e definizione del mutex
+    static DEFINE_MUTEX(w_mutex);   //dichiarazione e definizione del mutex per le scritture
+    static DEFINE_MUTEX(o_mutex); //dichiarazione e definizione del mutex per il parametro *off di dev_read()
     long unsigned int cmp_swap_output;
 
-    //inizializzazione del campo di tipo struct mutex
+    //inizializzazione dei campi di tipo struct mutex
     au_info.write_mutex = w_mutex;
+    au_info.off_mutex = o_mutex;
 
     cmp_swap_output = __sync_val_compare_and_swap(&(au_info.is_mounted), 0, 1);
     if (cmp_swap_output != 0) { //caso in cui il file system era già montato

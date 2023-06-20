@@ -27,7 +27,8 @@ struct rcu_node {
 
 struct auxiliary_info {
 	uint64_t is_mounted;
-	struct mutex write_mutex;			//serve a sincronizzare gli scrittori tra loro (ma non coi lettori)
+	struct mutex write_mutex;			//serve a sincronizzare gli scrittori tra loro (ma non coi lettori).
+	struct mutex off_mutex;				//serve a sincronizzare gli aggiornamenti del parametro *off della funzione dev_read().
 };
 
 #endif
