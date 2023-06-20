@@ -328,8 +328,10 @@ static ssize_t dev_read(struct file *, char *, size_t, loff_t *);
 static int dev_open(struct inode *, struct file *);
 static int dev_release(struct inode *, struct file *);
 
-//la dev_read() legge i dati dal blocco del dispositivo corrispondente alla posizione indicata dall'offset off.
-//RETURN 0, cosicché poi dev_read() non venga più invocata (mi occuperò di leggere tutti i blocchi in un ciclo definito qui).
+/* La dev_read() legge i dati dal blocco del dispositivo corrispondente alla posizione indicata dall'offset off.
+ * RETURN 0, cosicché poi dev_read() non venga più invocata (mi occuperò di leggere tutti i blocchi in un ciclo definito qui).
+ * Non viene implementato alcun meccanismo di sincronizzazione specifico per il parametro loff_t *off perché non viene mai aggiornato.
+ */
 static ssize_t dev_read(struct file *filp, char *buf, size_t len, loff_t *off) {
 
     struct buffer_head *bh;
@@ -344,6 +346,8 @@ static ssize_t dev_read(struct file *filp, char *buf, size_t len, loff_t *off) {
     int index;  //tiene traccia dell'indice di ciascun nodo della RCU list.
     struct rcu_node *curr_rcu_node;
     struct sorted_node *first_sorted_node;
+    struct sorted_node *prev_sorted_node;
+    struct sorted_node *curr_sorted_node;
 
     bh = NULL;
     the_inode = filp->f_inode;
@@ -385,9 +389,9 @@ static ssize_t dev_read(struct file *filp, char *buf, size_t len, loff_t *off) {
 
         if (curr_rcu_node->is_valid && curr_rcu_node->write_counter > 0) {  //la condizione curr_rcu_node->write_counter > 0 esclude superblocco e inode.
 
-            ret = add_sorted_node(index-2, curr_rcu_node->write_counter, first_sorted_node);    //index-2 perché considero il primo blocco dati a offset 0 e così via
+            ret = add_sorted_node(index, curr_rcu_node->write_counter, &first_sorted_node);    //considero il primo blocco dati a offset 2 e così via
             if (ret < 0) {
-                printk("%s: impossibile leggere il dispositivo: si è verificato un errore con l'allocazione della memoria %d\n", MOD_NAME);
+                printk("%s: impossibile leggere il dispositivo: si è verificato un errore con l'allocazione della memoria\n", MOD_NAME);
                 rcu_read_unlock();
                 return -EIO; //-EIO = errore di input/output            
             }
@@ -398,41 +402,43 @@ static ssize_t dev_read(struct file *filp, char *buf, size_t len, loff_t *off) {
 
     }
 
-    //TODO: kfree() di tutti i nodi della lista di struct sorted_node
-
-
-    //check that *off is within boundaries of file size
-    if (*off >= file_size)
-        return 0;
-    else if (*off + len > file_size)
-        len = file_size - *off;
-
-    //determine the block level offset for the operation; if offset falls into metadata, then initialize offset = METADATA_SIZE.
-    offset = *off % DEFAULT_BLOCK_SIZE;
-    if (offset < METADATA_SIZE)
-        offset = METADATA_SIZE;
-
-    //just read stuff in a single block - residuals will be managed at the application level
-    if (offset + len > DEFAULT_BLOCK_SIZE)
-        len = DEFAULT_BLOCK_SIZE - offset;
-
-    //compute the actual index of the the block to be read from device
-    block_to_read = *off/DEFAULT_BLOCK_SIZE + 2; //the value 2 accounts for superblock and file-inode on device (block 0 & block 1)
+    offset = METADATA_SIZE;             //l'offset da cui far partire ciascuna lettura di un singolo blocco deve partire dalla fine dei metadati.
+    len = DEFAULT_BLOCK_SIZE - offset;  //il numero di byte da leggere a ogni iterazione è pari al numero di byte di payload di un singolo blocco.
     
-    printk("%s: read operation must access block %d of the device", MOD_NAME, block_to_read);
+    prev_sorted_node = NULL;
+    curr_sorted_node = first_sorted_node;
 
-    //sb_read acquisisce il contenuto del blocco da leggere (quello di cui abbiamo appena calcolato l'indice).
-    bh = (struct buffer_head *)sb_bread(filp->f_path.dentry->d_inode->i_sb, block_to_read);
-    if(!bh){
-	    return -EIO;
+    //ciclo in cui vengono consegnati in ordine i dati inclusi nei blocchi validi
+    while(curr_sorted_node != NULL) {
+        
+        block_to_read = curr_sorted_node->node_index;
+        printk("%s: read operation must access block %d of the device", MOD_NAME, block_to_read);
+
+        //sb_read acquisisce il contenuto del blocco da leggere (quello di cui abbiamo appena calcolato l'indice).
+        bh = (struct buffer_head *)sb_bread(filp->f_path.dentry->d_inode->i_sb, block_to_read);
+        if(!bh){
+            printk("%s: impossibile leggere il dispositivo: si è verificato un errore con la lettura del blocco %d\n", MOD_NAME, block_to_read);
+            rcu_read_unlock();
+	        return -EIO;
+        }
+
+        //ora si copiano i dati dal buffer del kernel (bh->b_data+offset) al buffer dell'applicazione (buf), passato come parametro a onefilefs_read().
+        ret = copy_to_user(buf, bh->b_data + offset, len);
+        brelse(bh);
+        printk("%s: block %d successfully read\n", MOD_NAME, block_to_read);
+
+        prev_sorted_node = curr_sorted_node;
+        curr_sorted_node = curr_sorted_node->next;  //prossimo blocco da leggere
+
+        //kfree() del nodo appena attraversato poiché non serve più
+        first_sorted_node = curr_sorted_node;
+        kfree(prev_sorted_node);
+    
     }
-    //ora si copiano i dati dal buffer del kernel (bh->b_data+offset) al buffer dell'applicazione (buf), passato come parametro a onefilefs_read().
-    ret = copy_to_user(buf, bh->b_data + offset, len);
-    *off += (len - ret);
-    brelse(bh);
 
+    rcu_read_unlock();
     printk("%s: device successfully read\n", MOD_NAME);
-    return len - ret;   //return: numero di byte effettivamente letti e copiati
+    return 0;
 
 }
 

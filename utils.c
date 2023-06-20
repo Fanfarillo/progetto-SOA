@@ -18,7 +18,7 @@ int set_superblock_info(struct super_block *, unsigned int);
 int set_block_content(struct super_block *, int, unsigned int, char *, size_t);
 int invalidate_block_content(struct super_block *, int);
 
-int add_sorted_node(int, unsigned int, struct sorted_node *);
+int add_sorted_node(int, unsigned int, struct sorted_node **);
 
 //questa funzione restituisce il puntatore alla struttura dati che comprende le informazioni contenute nel superblocco del dispositivo.
 struct onefilefs_sb_info *get_superblock_info(struct super_block *global_sb) {
@@ -154,7 +154,7 @@ int invalidate_block_content(struct super_block *global_sb, int block_num) {
 }
 
 //questa funzione aggiunge un nodo alla lista collegata che serve per effettuare le letture dei blocchi in ordine di 'write_counter'.
-int add_sorted_node(int offset, unsigned int write_counter, struct sorted_node *first_sorted_node) {
+int add_sorted_node(int index, unsigned int write_counter, struct sorted_node **first_sorted_node_ptr) {
 
     struct sorted_node *prev_sorted_node;
     struct sorted_node *curr_sorted_node;
@@ -165,24 +165,24 @@ int add_sorted_node(int offset, unsigned int write_counter, struct sorted_node *
         return -1;  //error condition
     }
 
-    new_sorted_node->node_offset = offset;
+    new_sorted_node->node_index = index;
     new_sorted_node->write_counter = write_counter;
 
     //ciclo in cui navigo la lista collegata per stabilire la posizione corretta in cui inserire il nuovo nodo; se first_sorted_node == NULL, però, si tratta del primo nodo.
-    if (first_sorted_node == NULL) {
-        first_sorted_node = new_sorted_node;
+    if (*first_sorted_node_ptr == NULL) {
+        *first_sorted_node_ptr = new_sorted_node;
         return 0;
     }
 
     prev_sorted_node = NULL;
-    curr_sorted_node = first_sorted_node;
+    curr_sorted_node = *first_sorted_node_ptr;
 
     while(curr_sorted_node != NULL) {
         if (new_sorted_node->write_counter < curr_sorted_node) {
 
             if (prev_sorted_node == NULL) { //caso in cui new_sorted_node sarà il primo nodo della lista collegata di struct sorted_node
-                new_sorted_node->next = first_sorted_node;
-                first_sorted_node = new_sorted_node;
+                new_sorted_node->next = *first_sorted_node_ptr;
+                *first_sorted_node_ptr = new_sorted_node;
             }
             else {
                 prev_sorted_node->next = new_sorted_node;
