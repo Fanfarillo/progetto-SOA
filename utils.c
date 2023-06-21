@@ -106,8 +106,12 @@ int set_block_content(struct super_block *global_sb, int block_num, unsigned int
     new_db_cont = (struct data_block_content *)bh->b_data;
     new_db_cont->metadata = numeric_metadata;
     //ora ricopio un byte per volta la stringa di input all'interno della porzione del blocco riservata al payload.
-    for(i=0; i<size; i++) {
-        new_db_cont->payload[i] = source[i];
+    for(i=0; i<DEFAULT_BLOCK_SIZE-METADATA_SIZE; i++) {
+        if (i<size)
+            new_db_cont->payload[i] = source[i];
+        else
+            new_db_cont->payload[i] = '\0';
+            
     }
 
     //segnalazione al SO che il superblocco è stato modificato e che le modifiche devono essere sincronizzate col device sottostante
