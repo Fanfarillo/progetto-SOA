@@ -369,6 +369,7 @@ static ssize_t dev_read(struct file *filp, char *buf, size_t len, loff_t *off) {
         if (sb_disk == NULL) {
             printk("%s: impossibile leggere il dispositivo: si è verificato un errore col recupero dei dati del superblocco\n", MOD_NAME);
             rcu_read_unlock();
+            mutex_unlock(&(au_info.off_mutex));
             return -EIO; //-EIO = errore di input/output
         }
 
@@ -390,6 +391,7 @@ static ssize_t dev_read(struct file *filp, char *buf, size_t len, loff_t *off) {
                 if (ret < 0) {
                     printk("%s: impossibile leggere il dispositivo: si è verificato un errore con l'allocazione della memoria\n", MOD_NAME);
                     rcu_read_unlock();
+                    mutex_unlock(&(au_info.off_mutex));
                     return -EIO; //-EIO = errore di input/output            
                 }
 
@@ -403,9 +405,17 @@ static ssize_t dev_read(struct file *filp, char *buf, size_t len, loff_t *off) {
     }
 
     if (first_sorted_node != NULL) {        //caso in cui ci sono ancora dei dati da leggere
-        offset = METADATA_SIZE;             //l'offset da cui far partire ciascuna lettura di un singolo blocco deve partire dalla fine dei metadati.
-        len = DEFAULT_BLOCK_SIZE - offset;  //il numero di byte da leggere a ogni iterazione è pari al numero di byte di payload di un singolo blocco.
         prev_sorted_node = NULL;
+        offset = METADATA_SIZE; //l'offset da cui far partire ciascuna lettura di un singolo blocco deve partire dalla fine dei metadati.
+        
+        if (len == 0) {
+            delete_all_sorted_nodes(&first_sorted_node);      //kfree() di tutti gli eventuali sorted node rimasti
+            rcu_read_unlock();
+            mutex_unlock(&(au_info.off_mutex));
+            return 0;
+        }
+        else if (len + offset > DEFAULT_BLOCK_SIZE)           
+            len = DEFAULT_BLOCK_SIZE - offset;  //il numero di byte da leggere a ogni iterazione è al più pari al numero di byte di payload di un singolo blocco.
         
         block_to_read = first_sorted_node->node_index;
         printk("%s: read operation must access block %d of the device", MOD_NAME, block_to_read);
@@ -415,6 +425,7 @@ static ssize_t dev_read(struct file *filp, char *buf, size_t len, loff_t *off) {
         if(!bh){
             printk("%s: impossibile leggere il dispositivo: si è verificato un errore con la lettura del blocco %d\n", MOD_NAME, block_to_read);
             rcu_read_unlock();
+            mutex_unlock(&(au_info.off_mutex));
 	        return -EIO;
         }
 
