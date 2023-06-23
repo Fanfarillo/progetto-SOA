@@ -352,6 +352,8 @@ static ssize_t dev_read(struct file *filp, char *buf, size_t len, loff_t *off) {
     the_inode = filp->f_inode;
     file_size = the_inode->i_size;
 
+    printk("%s: read operation called with len %ld\n", MOD_NAME, len);
+
     //sanity check
     if (!au_info.is_mounted) {
         printk("%s: impossibile leggere il dispositivo: il file system non è stato montato\n", MOD_NAME);
@@ -409,6 +411,7 @@ static ssize_t dev_read(struct file *filp, char *buf, size_t len, loff_t *off) {
         offset = METADATA_SIZE; //l'offset da cui far partire ciascuna lettura di un singolo blocco deve partire dalla fine dei metadati.
         
         if (len == 0) {
+            printk("%s: len == 0: nothing to do\n", MOD_NAME);
             delete_all_sorted_nodes(&first_sorted_node);      //kfree() di tutti gli eventuali sorted node rimasti
             rcu_read_unlock();
             mutex_unlock(&(au_info.off_mutex));
@@ -444,6 +447,7 @@ static ssize_t dev_read(struct file *filp, char *buf, size_t len, loff_t *off) {
 
     }
     else {  //caso in cui la lettura è stata completata
+        printk("%s: read operation completed\n", MOD_NAME); 
         rcu_read_unlock();
         mutex_unlock(&(au_info.off_mutex));
         return 0;
