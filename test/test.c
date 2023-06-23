@@ -24,19 +24,42 @@ void invoke_put_data(void *arg) {
     pthread_t tid;
     char *source;   //primo parametro della syscall put_data()
     size_t size;    //secondo parametro della syscall put_data()
+    int ret;
+    unsigned long timestamp;
 
     tid = *(pthread_t *)arg;
     source = malloc(SIZE_SOURCE_STR);
-    if (!source) {  //TODO: pensare come gestire la cosa in caso di fallimento della malloc()
+    if (!source) {
         printf("[ERRORE] Problema di allocazione della memoria.\n");
-        fflush(stdout);    
+        fflush(stdout);
+        exit(-1); 
     }
 
     sprintf(source, "Scrittura da parte del thread %d\n", tid);
     size = strlen(source);
 
-    pthread_barrier_wait(&barrier);
-    //TODO: terminare l'implementazione della funzione
+    pthread_barrier_wait(&barrier); //attendo che tutti gli altri thread child raggiungano la barriera.
+
+    RDTSC(timestamp);
+    printf("[THREAD %d] Sto per invocare put_data(). Timestamp = %lu.\n", tid, timestamp);
+    fflush(stdout);
+
+    ret = syscall(PUT_SYSCALL, source, size);
+
+    RDTSC(timestamp);
+    printf("[THREAD %d] Ho terminato l'esecuzione di put_data(). Timestamp = %lu.\n", tid, timestamp);
+    fflush(stdout);
+
+    if (ret < 0) {
+        printf("[THREAD %d] L'esecuzione di put_data() NON è andata a buon fine.\n", tid);
+        fflush(stdout);
+        exit(-1);
+    }
+    else {
+        printf("[THREAD %d] L'esecuzione di put_data() è andata a buon fine.\n", tid);
+        fflush(stdout);
+        exit(0);
+    }
 
 }
 
@@ -58,6 +81,7 @@ void invoke_invalidate_data(void *arg) {
     
 }
 
+//è opportuno riversare l'output di cat in un file temporaneo.
 void launch_cat(void *arg) {
 
     pthread_t tid;
