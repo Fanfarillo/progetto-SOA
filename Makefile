@@ -10,6 +10,7 @@ all:
 	gcc filesystem/singlefilemakefs.c -o filesystem/singlefilemakefs
 	make -C /lib/modules/$(shell uname -r)/build M=$(PWD) modules
 	gcc user/user.c -o user/user.o
+	gcc test/test.c -o test/test.o -lpthread
 
 clean:
 	make -C /lib/modules/$(shell uname -r)/build M=$(PWD) clean
