@@ -1,15 +1,18 @@
 /* Questo file si pone l'obiettivo di testare la sincronizzazione data dal modulo kernel sviluppato.
  * Per far ciò, vengono generati diversi thread, i quali andranno a eseguire concorrentemente le operazioni
  * di put_data(), get_data(), invalidate_data() e dev_read(), riportando anche le informazioni relative alle
- * relative esecuzioni, tra cui il timestamp di inizio esecuzione e il timestamp di fine esecuzione.
+ * esecuzioni, tra cui il timestamp di inizio esecuzione e il timestamp di fine esecuzione.
  */
 
+#include <fcntl.h>
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
 
 #include "test.h"
+#include "../user/user.h"
+#include "../filesystem/singlefilefs.h"
 
 pthread_barrier_t barrier;  //barriera che serve a far partire tutti i thread contemporaneamente con l'invocazione delle operazioni
 
@@ -50,6 +53,9 @@ void invoke_put_data(void *arg) {
     printf("[THREAD %d] Ho terminato l'esecuzione di put_data(). Timestamp = %lu.\n", tid, timestamp);
     fflush(stdout);
 
+    //cleanup
+    free(source);
+
     if (ret < 0) {
         printf("[THREAD %d] L'esecuzione di put_data() NON è andata a buon fine.\n", tid);
         fflush(stdout);
@@ -66,18 +72,82 @@ void invoke_put_data(void *arg) {
 void invoke_get_data(void *arg) {
 
     pthread_t tid;
+    int offset;         //primo parametro della syscall get_data()
+    char *destination;  //secondo parametro della syscall get_data()
+    size_t size;        //terzo parametro della syscall get_data()
+    int ret;
+    unsigned long timestamp;
 
     tid = *(pthread_t *)arg;
-    pthread_barrier_wait(&barrier);
+    size = (size_t)DEFAULT_BLOCK_SIZE-METADATA_SIZE;
+    destination = malloc(size);
+    if (!destination) {
+        printf("[ERRORE] Problema di allocazione della memoria.\n");
+        fflush(stdout);
+        exit(-1); 
+    }
+
+    offset = (int)tid % TEST_BLOCKS;    //il blocco da leggere viene scelto in base all'ultima cifra del thread ID.
+
+    pthread_barrier_wait(&barrier); //attendo che tutti gli altri thread child raggiungano la barriera.
+
+    RDTSC(timestamp);
+    printf("[THREAD %d] Sto per invocare get_data(). Timestamp = %lu.\n", tid, timestamp);
+    fflush(stdout);
+
+    ret = syscall(GET_SYSCALL, offset, destination, size);
+
+    RDTSC(timestamp);
+    printf("[THREAD %d] Ho terminato l'esecuzione di get_data(). Timestamp = %lu.\n", tid, timestamp);
+    fflush(stdout);
+
+    if (ret < 0) {
+        printf("[THREAD %d] L'esecuzione di get_data() NON è andata a buon fine.\n", tid);
+        fflush(stdout);
+        free(destination);  //cleanup
+        exit(-1);
+    }
+    else {
+        printf("[THREAD %d] L'esecuzione di get_data() è andata a buon fine. READ DATA: %s\n", tid, destination);
+        fflush(stdout);
+        free(destination);  //cleanup
+        exit(0);
+    }
     
 }
 
 void invoke_invalidate_data(void *arg) {
 
     pthread_t tid;
+    int offset;
+    int ret;
+    unsigned long timestamp;
 
     tid = *(pthread_t *)arg;
-    pthread_barrier_wait(&barrier);
+    offset = (int)tid % TEST_BLOCKS;    //il blocco da invalidare viene scelto in base all'ultima cifra del thread ID.
+
+    pthread_barrier_wait(&barrier); //attendo che tutti gli altri thread child raggiungano la barriera.
+
+    RDTSC(timestamp);
+    printf("[THREAD %d] Sto per invocare invalidate_data(). Timestamp = %lu.\n", tid, timestamp);
+    fflush(stdout);
+
+    ret = syscall(INVALIDATE_SYSCALL, offset);
+
+    RDTSC(timestamp);
+    printf("[THREAD %d] Ho terminato l'esecuzione di invalidate_data(). Timestamp = %lu.\n", tid, timestamp);
+    fflush(stdout);
+
+    if (ret < 0) {
+        printf("[THREAD %d] L'esecuzione di invalidate_data() NON è andata a buon fine.\n", tid);
+        fflush(stdout);
+        exit(-1);
+    }
+    else {
+        printf("[THREAD %d] L'esecuzione di invalidate_data() è andata a buon fine.\n", tid);
+        fflush(stdout);
+        exit(0);
+    }
     
 }
 
@@ -85,9 +155,55 @@ void invoke_invalidate_data(void *arg) {
 void launch_cat(void *arg) {
 
     pthread_t tid;
+    int ret;
+    unsigned long timestamp;
+    char *filename;
+    char *command;
 
     tid = *(pthread_t *)arg;
-    pthread_barrier_wait(&barrier);
+    filename = malloc(SIZE_FILENAME);
+    if (!filename) {
+        printf("[ERRORE] Problema di allocazione della memoria.\n");
+        fflush(stdout);
+        exit(-1); 
+    }
+    command = malloc(SIZE_COMMAND_STR);
+    if (!command) {
+        printf("[ERRORE] Problema di allocazione della memoria.\n");
+        fflush(stdout);
+        exit(-1); 
+    }
+
+    sprintf(filename, "Thread-%d.txt\n", tid);
+    creat(filename, 0666);  //creazione del file temporaneo con permessi di accesso il lettura e scrittura
+    sprintf(command, "cat ../mount/the-file > %s", filename);
+
+    pthread_barrier_wait(&barrier); //attendo che tutti gli altri thread child raggiungano la barriera.
+
+    RDTSC(timestamp);
+    printf("[THREAD %d] Sto per lanciare il comando cat. Timestamp = %lu.\n", tid, timestamp);
+    fflush(stdout);
+
+    ret = system(command);  //esecuzione del comando cat
+
+    RDTSC(timestamp);
+    printf("[THREAD %d] Ho terminato l'esecuzione del comando cat. Timestamp = %lu.\n", tid, timestamp);
+    fflush(stdout);
+
+    //cleaup
+    free(filename);
+    free(command);
+
+    if (ret == -1) {
+        printf("[THREAD %d] L'esecuzione del comando cat NON è andata a buon fine.\n", tid);
+        fflush(stdout);
+        exit(-1);
+    }
+    else {
+        printf("[THREAD %d] L'esecuzione del comando cat è andata a buon fine.\n", tid);
+        fflush(stdout);
+        exit(0);
+    }
     
 }
 
