@@ -54,21 +54,20 @@ void *invoke_put_data(void *arg) {
     ret = syscall(PUT_SYSCALL, source, size);
 
     RDTSC(timestamp);
-    printf("[THREAD %ld] Ho terminato l'esecuzione di put_data(). Timestamp = %lu.\n", tid, timestamp);
+    printf("[THREAD %ld] Ho terminato l'esecuzione di put_data() sul blocco %d. Timestamp = %lu.\n", tid, ret, timestamp);
     fflush(stdout);
-
-    //cleanup
-    free(source);
 
     if (ret < 0) {
         printf("[THREAD %ld] L'esecuzione di put_data() NON è andata a buon fine.\n", tid);
         fflush(stdout);
-        exit(-1);
     }
     else {
         printf("[THREAD %ld] L'esecuzione di put_data() è andata a buon fine.\n", tid);
         fflush(stdout);
     }
+
+    //cleanup
+    free(source);
 
 }
 
@@ -104,20 +103,20 @@ void *invoke_get_data(void *arg) {
     ret = syscall(GET_SYSCALL, offset, destination, size);
 
     RDTSC(timestamp);
-    printf("[THREAD %ld] Ho terminato l'esecuzione di get_data(). Timestamp = %lu.\n", tid, timestamp);
+    printf("[THREAD %ld] Ho terminato l'esecuzione di get_data() sul blocco %d. Timestamp = %lu.\n", tid, offset, timestamp);
     fflush(stdout);
 
     if (ret < 0) {
         printf("[THREAD %ld] L'esecuzione di get_data() NON è andata a buon fine.\n", tid);
         fflush(stdout);
-        free(destination);  //cleanup
-        exit(-1);
     }
     else {
         printf("[THREAD %ld] L'esecuzione di get_data() è andata a buon fine. READ DATA: %s\n", tid, destination);
         fflush(stdout);
-        free(destination);  //cleanup
     }
+
+    //cleanup
+    free(destination);
     
 }
 
@@ -143,13 +142,12 @@ void *invoke_invalidate_data(void *arg) {
     ret = syscall(INVALIDATE_SYSCALL, offset);
 
     RDTSC(timestamp);
-    printf("[THREAD %ld] Ho terminato l'esecuzione di invalidate_data(). Timestamp = %lu.\n", tid, timestamp);
+    printf("[THREAD %ld] Ho terminato l'esecuzione di invalidate_data() sul blocco %d. Timestamp = %lu.\n", tid, offset, timestamp);
     fflush(stdout);
 
     if (ret < 0) {
         printf("[THREAD %ld] L'esecuzione di invalidate_data() NON è andata a buon fine.\n", tid);
         fflush(stdout);
-        exit(-1);
     }
     else {
         printf("[THREAD %ld] L'esecuzione di invalidate_data() è andata a buon fine.\n", tid);
@@ -191,18 +189,17 @@ void *launch_cat(void *arg) {
     printf("[THREAD %ld] Ho terminato l'esecuzione del comando cat. Timestamp = %lu.\n", tid, timestamp);
     fflush(stdout);
 
-    //cleaup
-    free(command);
-
     if (ret == -1) {
         printf("[THREAD %ld] L'esecuzione del comando cat NON è andata a buon fine.\n", tid);
         fflush(stdout);
-        exit(-1);
     }
     else {
         printf("[THREAD %ld] L'esecuzione del comando cat è andata a buon fine.\n", tid);
         fflush(stdout);
     }
+
+    //cleaup
+    free(command);
     
 }
 
