@@ -48,21 +48,21 @@ void *invoke_put_data(void *arg) {
     pthread_barrier_wait(&barrier); //attendo che tutti gli altri thread child raggiungano la barriera.
 
     RDTSC(timestamp);
-    printf("[THREAD %ld] Sto per invocare put_data(). Timestamp = %lu.\n", tid, timestamp);
+    printf("\n[THREAD %ld] Sto per invocare put_data(). Timestamp = %lu.\n", tid, timestamp);
     fflush(stdout);
 
     ret = syscall(PUT_SYSCALL, source, size);
 
     RDTSC(timestamp);
-    printf("[THREAD %ld] Ho terminato l'esecuzione di put_data() sul blocco %d. Timestamp = %lu.\n", tid, ret, timestamp);
+    printf("\n[THREAD %ld] Ho terminato l'esecuzione di put_data() sul blocco %d. Timestamp = %lu.\n", tid, ret, timestamp);
     fflush(stdout);
 
     if (ret < 0) {
-        printf("[THREAD %ld] L'esecuzione di put_data() NON è andata a buon fine.\n", tid);
+        printf("\n[THREAD %ld] L'esecuzione di put_data() NON è andata a buon fine.\n", tid);
         fflush(stdout);
     }
     else {
-        printf("[THREAD %ld] L'esecuzione di put_data() è andata a buon fine.\n", tid);
+        printf("\n[THREAD %ld] L'esecuzione di put_data() è andata a buon fine.\n", tid);
         fflush(stdout);
     }
 
@@ -92,26 +92,26 @@ void *invoke_get_data(void *arg) {
         exit(-1); 
     }
 
-    offset = (int)(tid % TEST_BLOCKS);    //il blocco da leggere viene scelto in base all'ultima cifra del thread ID.
+    offset = (int)(tid % TEST_BLOCKS);    //il blocco da leggere viene scelto in base al thread ID.
 
     pthread_barrier_wait(&barrier); //attendo che tutti gli altri thread child raggiungano la barriera.
 
     RDTSC(timestamp);
-    printf("[THREAD %ld] Sto per invocare get_data(). Timestamp = %lu.\n", tid, timestamp);
+    printf("\n[THREAD %ld] Sto per invocare get_data(). Timestamp = %lu.\n", tid, timestamp);
     fflush(stdout);
 
     ret = syscall(GET_SYSCALL, offset, destination, size);
 
     RDTSC(timestamp);
-    printf("[THREAD %ld] Ho terminato l'esecuzione di get_data() sul blocco %d. Timestamp = %lu.\n", tid, offset, timestamp);
+    printf("\n[THREAD %ld] Ho terminato l'esecuzione di get_data() sul blocco %d. Timestamp = %lu.\n", tid, offset, timestamp);
     fflush(stdout);
 
     if (ret < 0) {
-        printf("[THREAD %ld] L'esecuzione di get_data() NON è andata a buon fine.\n", tid);
+        printf("\n[THREAD %ld] L'esecuzione di get_data() NON è andata a buon fine.\n", tid);
         fflush(stdout);
     }
     else {
-        printf("[THREAD %ld] L'esecuzione di get_data() è andata a buon fine. READ DATA: %s\n", tid, destination);
+        printf("\n[THREAD %ld] L'esecuzione di get_data() è andata a buon fine. READ DATA: %s\n", tid, destination);
         fflush(stdout);
     }
 
@@ -131,26 +131,26 @@ void *invoke_invalidate_data(void *arg) {
     printf("[THREAD %ld] Eccomi qua, all'interno della funzione invoke_invalidate_data().\n", tid);
     fflush(stdout);
 
-    offset = (int)(tid % TEST_BLOCKS);    //il blocco da invalidare viene scelto in base all'ultima cifra del thread ID.
+    offset = (int)(tid % TEST_BLOCKS);    //il blocco da invalidare viene scelto in base al thread ID.
 
     pthread_barrier_wait(&barrier); //attendo che tutti gli altri thread child raggiungano la barriera.
 
     RDTSC(timestamp);
-    printf("[THREAD %ld] Sto per invocare invalidate_data(). Timestamp = %lu.\n", tid, timestamp);
+    printf("\n[THREAD %ld] Sto per invocare invalidate_data(). Timestamp = %lu.\n", tid, timestamp);
     fflush(stdout);
 
     ret = syscall(INVALIDATE_SYSCALL, offset);
 
     RDTSC(timestamp);
-    printf("[THREAD %ld] Ho terminato l'esecuzione di invalidate_data() sul blocco %d. Timestamp = %lu.\n", tid, offset, timestamp);
+    printf("\n[THREAD %ld] Ho terminato l'esecuzione di invalidate_data() sul blocco %d. Timestamp = %lu.\n", tid, offset, timestamp);
     fflush(stdout);
 
     if (ret < 0) {
-        printf("[THREAD %ld] L'esecuzione di invalidate_data() NON è andata a buon fine.\n", tid);
+        printf("\n[THREAD %ld] L'esecuzione di invalidate_data() NON è andata a buon fine.\n", tid);
         fflush(stdout);
     }
     else {
-        printf("[THREAD %ld] L'esecuzione di invalidate_data() è andata a buon fine.\n", tid);
+        printf("\n[THREAD %ld] L'esecuzione di invalidate_data() è andata a buon fine.\n", tid);
         fflush(stdout);
     }
     
@@ -180,21 +180,17 @@ void *launch_cat(void *arg) {
     pthread_barrier_wait(&barrier); //attendo che tutti gli altri thread child raggiungano la barriera.
 
     RDTSC(timestamp);
-    printf("[THREAD %ld] Sto per lanciare il comando cat. Timestamp = %lu.\n", tid, timestamp);
+    printf("\n[THREAD %ld] Sto per lanciare il comando cat. Timestamp = %lu.\n", tid, timestamp);
     fflush(stdout);
 
     ret = system(command);  //esecuzione del comando cat
 
     RDTSC(timestamp);
-    printf("[THREAD %ld] Ho terminato l'esecuzione del comando cat. Timestamp = %lu.\n", tid, timestamp);
+    printf("\n[THREAD %ld] Ho terminato l'esecuzione del comando cat. Timestamp = %lu.\n", tid, timestamp);
     fflush(stdout);
 
-    if (ret == -1) {
-        printf("[THREAD %ld] L'esecuzione del comando cat NON è andata a buon fine.\n", tid);
-        fflush(stdout);
-    }
-    else {
-        printf("[THREAD %ld] L'esecuzione del comando cat è andata a buon fine.\n", tid);
+    if (ret < 0) {
+        printf("\n[THREAD %ld] L'esecuzione del comando cat è incorsa a un problema interno.\n", tid);
         fflush(stdout);
     }
 
@@ -232,19 +228,19 @@ int main(int argc, char **argv) {
                  * Terzo parametro: puntatore alla funzione da cui il nuovo thread inizierà l'esecuzione
                  * Quarto parametro: puntatore al parametro di input del nuovo thread
                  */
-                ret = pthread_create(&tids[thread_index], NULL, invoke_put_data, &tids[thread_index]);
-                break;
+                ret = pthread_create(&tids[thread_index], NULL, launch_cat, &tids[thread_index]);
+                break;               
             
             case 1:
+                ret = pthread_create(&tids[thread_index], NULL, invoke_put_data, &tids[thread_index]);
+                break;
+                
+            case 2:
                 ret = pthread_create(&tids[thread_index], NULL, invoke_get_data, &tids[thread_index]);
                 break;
-
-            case 2:
-                ret = pthread_create(&tids[thread_index], NULL, invoke_invalidate_data, &tids[thread_index]);
-                break;
-
+                
             case 3:
-                ret = pthread_create(&tids[thread_index], NULL, launch_cat, &tids[thread_index]);
+                ret = pthread_create(&tids[thread_index], NULL, invoke_invalidate_data, &tids[thread_index]);
                 break;
 
             default:

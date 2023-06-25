@@ -210,7 +210,7 @@ struct dentry *singlefilefs_mount(struct file_system_type *fs_type, int flags, c
 
     //qui iniziano le variabili locali definite direttamente da me
     static DEFINE_MUTEX(w_mutex);   //dichiarazione e definizione del mutex per le scritture
-    static DEFINE_MUTEX(o_mutex); //dichiarazione e definizione del mutex per il parametro *off di dev_read()
+    static DEFINE_MUTEX(o_mutex);   //dichiarazione e definizione del mutex per il parametro *off di dev_read()
     long unsigned int cmp_swap_output;
 
     //inizializzazione dei campi di tipo struct mutex

@@ -73,7 +73,11 @@ asmlinkage int sys_put_data(char *source, size_t size)
     #ifdef DEBUG
     printk("%s: [put_data] acquisizione del mutex_lock in corso...\n", MOD_NAME);
     #endif
-    mutex_lock(&(au_info.write_mutex));
+    ret = mutex_trylock(&(au_info.write_mutex));
+    if (ret == 0) {
+        printk("%s: impossibile eseguire la system call put_data(): il lock è occupato\n", MOD_NAME);
+        return -EBUSY;
+    }
     #ifdef DEBUG
     printk("%s: [put_data] mutex_lock correttamente acquisito\n", MOD_NAME);
     #endif
@@ -93,7 +97,11 @@ asmlinkage int sys_put_data(char *source, size_t size)
         rcu_read_unlock();
         mutex_unlock(&(au_info.write_mutex));
         #ifdef DEBUG
-        printk("%s: [put_data] mutex_lock e rcu_read_lock correttamente rilasciati\n", MOD_NAME);
+        if (mutex_is_locked(&(au_info.write_mutex))) {
+            printk("%s: [put_data] c'è un problema con mutex_unlock()\n", MOD_NAME);
+        } else {
+            printk("%s: [put_data] mutex_lock e rcu_read_lock correttamente rilasciati\n", MOD_NAME);
+        }
         #endif
         return -EIO; //-EIO = errore di input/output
     }
@@ -117,7 +125,11 @@ asmlinkage int sys_put_data(char *source, size_t size)
             rcu_read_unlock();
             mutex_unlock(&(au_info.write_mutex));
             #ifdef DEBUG
-            printk("%s: [put_data] mutex_lock e rcu_read_lock correttamente rilasciati\n", MOD_NAME);
+            if (mutex_is_locked(&(au_info.write_mutex))) {
+                printk("%s: [put_data] c'è un problema con mutex_unlock()\n", MOD_NAME);
+            } else {
+                printk("%s: [put_data] mutex_lock e rcu_read_lock correttamente rilasciati\n", MOD_NAME);
+            }
             #endif
             return -ENOMEM; //-ENOMEM = errore di esaurimento della memoria
         }
@@ -140,7 +152,11 @@ asmlinkage int sys_put_data(char *source, size_t size)
         printk("%s: impossibile eseguire la system call put_data(): si è verificato un errore con la scrittura dei dati sul superblocco\n", MOD_NAME);
         mutex_unlock(&(au_info.write_mutex));
         #ifdef DEBUG
-        printk("%s: [put_data] mutex_lock correttamente rilasciato\n", MOD_NAME);
+        if (mutex_is_locked(&(au_info.write_mutex))) {
+            printk("%s: [put_data] c'è un problema con mutex_unlock()\n", MOD_NAME);
+        } else {
+            printk("%s: [put_data] mutex_lock correttamente rilasciato\n", MOD_NAME);
+        }
         #endif
         return -EIO; //-EIO = errore di input/output        
     }
@@ -151,14 +167,22 @@ asmlinkage int sys_put_data(char *source, size_t size)
         printk("%s: impossibile eseguire la system call put_data(): si è verificato un errore con la scrittura dei dati sul blocco %d\n", MOD_NAME, index-2);
         mutex_unlock(&(au_info.write_mutex));
         #ifdef DEBUG
-        printk("%s: [put_data] mutex_lock correttamente rilasciato\n", MOD_NAME);
+        if (mutex_is_locked(&(au_info.write_mutex))) {
+            printk("%s: [put_data] c'è un problema con mutex_unlock()\n", MOD_NAME);
+        } else {
+            printk("%s: [put_data] mutex_lock correttamente rilasciato\n", MOD_NAME);
+        }
         #endif
         return -EIO; //-EIO = errore di input/output        
     }
 
     mutex_unlock(&(au_info.write_mutex));
     #ifdef DEBUG
-    printk("%s: [put_data] mutex_lock correttamente rilasciato\n", MOD_NAME);
+    if (mutex_is_locked(&(au_info.write_mutex))) {
+        printk("%s: [put_data] c'è un problema con mutex_unlock()\n", MOD_NAME);
+    } else {
+        printk("%s: [put_data] mutex_lock correttamente rilasciato\n", MOD_NAME);
+    }
     #endif
 
     synchronize_rcu();  //funzione che serve a far sì che lo scrittore attenda la terminazione del grace period
@@ -314,7 +338,11 @@ asmlinkage int sys_invalidate_data(int offset)
     #ifdef DEBUG
     printk("%s: [invalidate_data] acquisizione del mutex_lock in corso...\n", MOD_NAME);
     #endif
-    mutex_lock(&(au_info.write_mutex));
+    ret = mutex_trylock(&(au_info.write_mutex));
+    if (ret == 0) {
+        printk("%s: impossibile eseguire la system call put_data(): il lock è occupato\n", MOD_NAME);
+        return -EBUSY;
+    }
     #ifdef DEBUG
     printk("%s: [invalidate_data] mutex_lock correttamente acquisito\n", MOD_NAME);
     #endif
@@ -334,7 +362,11 @@ asmlinkage int sys_invalidate_data(int offset)
         rcu_read_unlock();
         mutex_unlock(&(au_info.write_mutex));
         #ifdef DEBUG
-        printk("%s: [invalidate_data] mutex_lock e rcu_read_lock correttamente rilasciati\n", MOD_NAME);
+        if (mutex_is_locked(&(au_info.write_mutex))) {
+            printk("%s: [invalidate_data] c'è un problema con mutex_unlock()\n", MOD_NAME);
+        } else {
+            printk("%s: [invalidate_data] mutex_lock e rcu_read_lock correttamente rilasciati\n", MOD_NAME);
+        }
         #endif
         return -EIO; //-EIO = errore di input/output
     }
@@ -343,7 +375,11 @@ asmlinkage int sys_invalidate_data(int offset)
         rcu_read_unlock();
         mutex_unlock(&(au_info.write_mutex));
         #ifdef DEBUG
-        printk("%s: [invalidate_data] mutex_lock e rcu_read_lock correttamente rilasciati\n", MOD_NAME);
+        if (mutex_is_locked(&(au_info.write_mutex))) {
+            printk("%s: [invalidate_data] c'è un problema con mutex_unlock()\n", MOD_NAME);
+        } else {
+            printk("%s: [invalidate_data] mutex_lock e rcu_read_lock correttamente rilasciati\n", MOD_NAME);
+        }
         #endif
         return -EINVAL; //-EINVAL = parametri non validi (in questo caso int offset)
     }
@@ -369,7 +405,11 @@ asmlinkage int sys_invalidate_data(int offset)
         rcu_read_unlock();
         mutex_unlock(&(au_info.write_mutex));
         #ifdef DEBUG
-        printk("%s: [invalidate_data] mutex_lock e rcu_read_lock correttamente rilasciati\n", MOD_NAME);
+        if (mutex_is_locked(&(au_info.write_mutex))) {
+            printk("%s: [invalidate_data] c'è un problema con mutex_unlock()\n", MOD_NAME);
+        } else {
+            printk("%s: [invalidate_data] mutex_lock e rcu_read_lock correttamente rilasciati\n", MOD_NAME);
+        }
         #endif
         return -ENODATA; //-ENODATA = nessun dato disponibile
     }
@@ -390,14 +430,22 @@ asmlinkage int sys_invalidate_data(int offset)
         printk("%s: impossibile eseguire la system call invalidate_data(): si è verificato un errore con l'invalidazione dei dati sul blocco %d\n", MOD_NAME, offset);
         mutex_unlock(&(au_info.write_mutex));
         #ifdef DEBUG
-        printk("%s: [invalidate_data] mutex_lock correttamente rilasciato\n", MOD_NAME);
+        if (mutex_is_locked(&(au_info.write_mutex))) {
+            printk("%s: [invalidate_data] c'è un problema con mutex_unlock()\n", MOD_NAME);
+        } else {
+            printk("%s: [invalidate_data] mutex_lock correttamente rilasciato\n", MOD_NAME);
+        }
         #endif
         return -EIO; //-EIO = errore di input/output        
     }
 
     mutex_unlock(&(au_info.write_mutex));
     #ifdef DEBUG
-    printk("%s: [invalidate_data] mutex_lock correttamente rilasciato\n", MOD_NAME);
+    if (mutex_is_locked(&(au_info.write_mutex))) {
+        printk("%s: [invalidate_data] c'è un problema con mutex_unlock()\n", MOD_NAME);
+    } else {
+        printk("%s: [invalidate_data] mutex_lock correttamente rilasciato\n", MOD_NAME);
+    }
     #endif
 
     synchronize_rcu();  //funzione che serve a far sì che lo scrittore attenda la terminazione del grace period
@@ -454,7 +502,11 @@ static ssize_t dev_read(struct file *filp, char *buf, size_t len, loff_t *off) {
         #ifdef DEBUG
         printk("%s: [dev_read] acquisizione del mutex_lock in corso...\n", MOD_NAME);
         #endif
-        mutex_lock(&(au_info.off_mutex));
+        ret = mutex_trylock(&(au_info.off_mutex));
+        if (ret == 0) {
+            printk("%s: impossibile leggere il dispositivo: il lock è occupato\n", MOD_NAME);
+            return -EBUSY;
+        }
         #ifdef DEBUG
         printk("%s: [dev_read] mutex_lock correttamente acquisito\n", MOD_NAME);
         #endif
@@ -474,7 +526,11 @@ static ssize_t dev_read(struct file *filp, char *buf, size_t len, loff_t *off) {
             rcu_read_unlock();
             mutex_unlock(&(au_info.off_mutex));
             #ifdef DEBUG
-            printk("%s: [dev_read] mutex_lock e rcu_read_lock correttamente rilasciati\n", MOD_NAME);
+            if (mutex_is_locked(&(au_info.off_mutex))) {
+                printk("%s: [dev_read] c'è un problema con mutex_unlock()\n", MOD_NAME);
+            } else {
+                printk("%s: [dev_read] mutex_lock e rcu_read_lock correttamente rilasciati\n", MOD_NAME);
+            }
             #endif
             return -EIO; //-EIO = errore di input/output
         }
@@ -499,7 +555,11 @@ static ssize_t dev_read(struct file *filp, char *buf, size_t len, loff_t *off) {
                     rcu_read_unlock();
                     mutex_unlock(&(au_info.off_mutex));
                     #ifdef DEBUG
-                    printk("%s: [dev_read] mutex_lock e rcu_read_lock correttamente rilasciati\n", MOD_NAME);
+                    if (mutex_is_locked(&(au_info.off_mutex))) {
+                        printk("%s: [dev_read] c'è un problema con mutex_unlock()\n", MOD_NAME);
+                    } else {
+                        printk("%s: [dev_read] mutex_lock e rcu_read_lock correttamente rilasciati\n", MOD_NAME);
+                    }
                     #endif
                     return -EIO; //-EIO = errore di input/output            
                 }
@@ -523,7 +583,11 @@ static ssize_t dev_read(struct file *filp, char *buf, size_t len, loff_t *off) {
             rcu_read_unlock();
             mutex_unlock(&(au_info.off_mutex));
             #ifdef DEBUG
-            printk("%s: [dev_read] mutex_lock e rcu_read_lock correttamente rilasciati\n", MOD_NAME);
+            if (mutex_is_locked(&(au_info.off_mutex))) {
+                printk("%s: [dev_read] c'è un problema con mutex_unlock()\n", MOD_NAME);
+            } else {
+                printk("%s: [dev_read] mutex_lock e rcu_read_lock correttamente rilasciati\n", MOD_NAME);
+            }
             #endif
             return 0;
         }
@@ -540,7 +604,11 @@ static ssize_t dev_read(struct file *filp, char *buf, size_t len, loff_t *off) {
             rcu_read_unlock();
             mutex_unlock(&(au_info.off_mutex));
             #ifdef DEBUG
-            printk("%s: [dev_read] mutex_lock e rcu_read_lock correttamente rilasciati\n", MOD_NAME);
+            if (mutex_is_locked(&(au_info.off_mutex))) {
+                printk("%s: [dev_read] c'è un problema con mutex_unlock()\n", MOD_NAME);
+            } else {
+                printk("%s: [dev_read] mutex_lock e rcu_read_lock correttamente rilasciati\n", MOD_NAME);
+            }
             #endif
 	        return -EIO;
         }
@@ -564,7 +632,11 @@ static ssize_t dev_read(struct file *filp, char *buf, size_t len, loff_t *off) {
         rcu_read_unlock();
         mutex_unlock(&(au_info.off_mutex));
         #ifdef DEBUG
-        printk("%s: [dev_read] mutex_lock e rcu_read_lock correttamente rilasciati\n", MOD_NAME);
+        if (mutex_is_locked(&(au_info.off_mutex))) {
+            printk("%s: [dev_read] c'è un problema con mutex_unlock()\n", MOD_NAME);
+        } else {
+            printk("%s: [dev_read] mutex_lock e rcu_read_lock correttamente rilasciati\n", MOD_NAME);
+        }
         #endif
         return 0;
 
