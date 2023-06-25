@@ -1,3 +1,4 @@
+#include <errno.h>
 #include <limits.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -117,7 +118,15 @@ void put_operation() {
     fgets(source, source_size, stdin);
     clear_stdin_after_fgets(source, source_size);
 
-    ret = syscall(PUT_SYSCALL, source, size);
+    while(1) {
+        ret = syscall(PUT_SYSCALL, source, size);
+        if (!(ret < 0 && errno == EBUSY))   //caso in cui non ci sono stati problemi di concorrenza
+            break;
+        //caso in cui ci sono stati problemi di concorrenza
+        printf("[CONCURRENCY ISSUE] Trying to call put_data() again...\n");
+        fflush(stdout);
+
+    }
     if (ret < 0) {
         printf("[ERROR] A problem occurred during syscall execution. Maybe there is no free device block.\nPress Enter to continue...\n");
         fflush(stdout);
@@ -221,7 +230,15 @@ void invalidate_operation() {
         return;
     }
 
-    ret = syscall(INVALIDATE_SYSCALL, offset);
+    while(1) {
+        ret = syscall(INVALIDATE_SYSCALL, offset);
+        if (!(ret < 0 && errno == EBUSY))   //caso in cui non ci sono stati problemi di concorrenza
+            break;
+        //caso in cui ci sono stati problemi di concorrenza
+        printf("[CONCURRENCY ISSUE] Trying to call invalidate_data() again...\n");
+        fflush(stdout);
+
+    }
     if (ret < 0) {
         printf("[ERROR] A problem occurred during syscall execution. Maybe the selected device block is already invalid or does not exist.\nPress Enter to continue...\n");
         fflush(stdout);

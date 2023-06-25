@@ -4,6 +4,7 @@
  * esecuzioni, tra cui il timestamp di inizio esecuzione e il timestamp di fine esecuzione.
  */
 
+#include <errno.h>
 #include <pthread.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -51,7 +52,12 @@ void *invoke_put_data(void *arg) {
     printf("\n[THREAD %ld] Sto per invocare put_data(). Timestamp = %lu.\n", tid, timestamp);
     fflush(stdout);
 
-    ret = syscall(PUT_SYSCALL, source, size);
+    while(1) {
+        ret = syscall(PUT_SYSCALL, source, size);
+        if (!(ret < 0 && errno == EBUSY))   //caso in cui non ci sono stati problemi di concorrenza
+            break;
+
+    }
 
     RDTSC(timestamp);
     printf("\n[THREAD %ld] Ho terminato l'esecuzione di put_data() sul blocco %d. Timestamp = %lu.\n", tid, ret, timestamp);
@@ -139,7 +145,12 @@ void *invoke_invalidate_data(void *arg) {
     printf("\n[THREAD %ld] Sto per invocare invalidate_data(). Timestamp = %lu.\n", tid, timestamp);
     fflush(stdout);
 
-    ret = syscall(INVALIDATE_SYSCALL, offset);
+    while(1) {
+        ret = syscall(INVALIDATE_SYSCALL, offset);
+        if (!(ret < 0 && errno == EBUSY))   //caso in cui non ci sono stati problemi di concorrenza
+            break;
+
+    }
 
     RDTSC(timestamp);
     printf("\n[THREAD %ld] Ho terminato l'esecuzione di invalidate_data() sul blocco %d. Timestamp = %lu.\n", tid, offset, timestamp);
@@ -189,8 +200,12 @@ void *launch_cat(void *arg) {
     printf("\n[THREAD %ld] Ho terminato l'esecuzione del comando cat. Timestamp = %lu.\n", tid, timestamp);
     fflush(stdout);
 
-    if (ret < 0) {
-        printf("\n[THREAD %ld] L'esecuzione del comando cat è incorsa a un problema interno.\n", tid);
+    if (ret != 0) {
+        printf("\n[THREAD %ld] L'esecuzione del comando cat è NON è andata a buon fine.\n", tid);
+        fflush(stdout);
+    }
+    else {
+        printf("\n[THREAD %ld] L'esecuzione del comando cat è andata a buon fine.\n", tid);
         fflush(stdout);
     }
 
