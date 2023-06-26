@@ -146,4 +146,26 @@ Per utilizzare i servizi del modulo kernel sviluppato nel presente progetto, son
 * ```test.c``` è un programma che serve esclusivamente a eseguire dei casi di test: qui viene generato un insieme di thread che invocano concorrentemente le system call put_data(), get_data() e invalidate_data() e il comando cat. Ciascun thread, durante la sua esecuzione, stampa in stdout le informazioni relative alle proprie operazioni (e.g. la funzione che sta per invocare, l'esito di tale funzione, e così via).
 
 ## Howto
-TODO
+1. Configurare i parametri da definire a tempo di compilazione e in particolare:
+   * DATA_BLOCKS all'interno del Makefile del progetto per definire il numero massimo di blocchi che costituiscono il dispositivo.
+   * MOUNT_DIR all'interno del Makefile del progetto per stabilire la directory in cui il dispositivo deve essere montato (NB: nel caso in cui si decide di modificare il valore di questa variabile, sarà necessario modificare di conseguenza la stringa definita come secondo parametro di sprintf() alla riga 189 del file test/test.c).
+   * SYNC all'interno del file header devFunctions.h. È da commentare nel caso in cui si vuole che le scritture all'interno del dispositivo avvengano tramite il page-cache write back daemon; è da decommentare nel caso in cui si vuole che le scritture avvengano in maniera sincrona.
+   * DEBUG all'interno del file header devFunctions.h. È da decommentare nel caso in cui si vuole un maggior numero di messaggi riportati all'interno del log del kernel mediante una chiamata a printk(). Questi messaggi aggiuntivi riguardano l'acquisizione e il rilascio dei vari lock durante l'esecuzione delle tre system call e della file operation dev_read().
+2. Entrare nella directory syscall-table/ e lanciare nell'ordine i seguenti comandi:
+   * ```make``` per compilare il modulo ausiliario che effettua la discovery della system call table (senza conoscere l'indirizzo della quale non sarebbe possibile installare le tre nuove system call).
+   * ```sudo make insmod``` per installare il modulo ausiliario che effettua la discovery della system call table.
+3. Tornare alla directory principale e lanciare nell'ordine i seguenti comandi:
+   * ```make``` per compilare il modulo del kernel che implementa il device driver e i programmi user.c, test.c.
+   * ```sudo make insmod``` per installare il modulo del kernel che implementa il device driver.
+   * ```sudo make create-fs``` per creare l'immagine del dispositivo.
+   * ```sudo make mount-fs``` per montare effettivamente il dispositivo nella directory specificata dalla variabile $(MOUNT_DIR).
+4. Per eseguire il programma user.o (generato dalla compilazione di user.c), basta entrare nella directory user/ e lanciare il comando ```./user.o```.
+5. Per eseguire il programma test.o (generato dalla compilazione di test.c), è necessario entrare nella directory test/ e lanciare il comando ```./test.o```.
+6. Per rimuovere il modulo che implementa il device driver, basta lanciare i seguenti comandi:
+   * ```make clean``` per rimuovere i file generati dalla compilazione del modulo.
+   * ```sudo make unmount-fs``` per effettuare lo smontaggio del dispositivo.
+   * ```sudo make rmmod``` per rimuovere il modulo del kernel dal sistema operativo.
+   * ```sudo make del-image``` per rimuovere il file contenente l'immagine del dispositivo.
+7. Per rimuovere il modulo ausiliario che effettua la discovery della system call table, basta entrare nella directory syscall-table/ e lanciare i seguenti comandi:
+   * ```make clean``` per rimuovere i file generati dalla compilazione del modulo ausiliario.
+   * ```sudo make rmmod``` per rimuovere il modulo ausiliario dal sistema operativo.
