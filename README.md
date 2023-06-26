@@ -135,7 +135,10 @@ __Premessa:__ l'implementazione di questa funzione tiene conto del fatto che pu�
 4. Nel momento in cui non vi sono più dati da leggere, dev_read() restituisce 0, il che comporta l'assegnazione del valore 0 alla variabile puntata da *off* e l'uscita dal loop di invocazioni a dev_read() da parte del codice di livello user sovrastante.
 
 ## Sincronizzazione
-TODO
+* __get_data():__ qui si utilizza soltanto il rcu_read_lock(), ovvero il contatore atomico utilizzato dai lettori per determinare il grace period. Anche se viene denominato 'lock', non porta a un accesso esclusivo alle risorse, tant'è vero che concorrentemente a un lettore, possono accedere alla RCU list e al dispositivo sia altri lettori che gli scrittori.
+* __put_data():__ qui si utilizzano il rcu_read_lock() e il write_mutex. L'rcu_read_lock() serve perché, prima di effettuare la scrittura vera e propria, si itera sulla RCU list per trovare un nodo non valido; d'altro canto, un lock a parte (il write_mutex, appunto) è necessario per coordinare gli scrittori tra loro, cosa che non viene garantita direttamente dalla sincronizzazione basata sull'RCU.
+* __invalidate_data():__ anche qui si utilizzano il rcu_read_lock() e il write_mutex per motivi analoghi a quelli esposti per la system call put_data().
+* __dev_read():__ qui si utilizzano il rcu_read_lock() e l'off_mutex. L'rcu_read_lock() è necessario perché si effettuano degli accessi in lettura al dispositivo; d'altra parte, è stato introdotto un ulteriore lock per coordinare tra loro le varie chiamate a dev_read(): infatti, in questa funzione vengono utilizzati dei dati condivisi che richiedono un'attenta sincronizzazione affinché gli accessi a loro risultino corretti. Tali dati condivisi sono la variabile puntata dal pointer *off* (i.e. l'ultimo parametro in ingresso di dev_read()) e la lista collegata di *struct sorted_node*.
 
 ## Software di livello user
 TODO
