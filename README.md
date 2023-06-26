@@ -37,7 +37,7 @@ Le specifiche del progetto prevedono anche le seguenti proprietà:
 * ```uint64_t magic``` indica il magic number associato al file system.
 * ```uint64_t block_size``` indica la dimensione di ciascun blocco di memoria che compone il dispositivo.
 * ```uint64_t total_data_blocks``` indica il numero di data block (esclusi superblocco e inode del file) che compogono il dispositivo.
-* ```unsigned int total_writes``` è un contatore globale delle scritture effettuate nel dispositivo e funge da timestamp; in particolare, è pari al timestamp (i.e. al numero d'ordine) dell'ultima scrittura effettuata e serve a dare un ordinamento ai blocchi nel momento in cui si vuole leggere il dispositivo con la file operation dev_read().
+* ```unsigned int *total_writes*``` è un contatore globale delle scritture effettuate nel dispositivo e funge da timestamp; in particolare, è pari al timestamp (i.e. al numero d'ordine) dell'ultima scrittura effettuata e serve a dare un ordinamento ai blocchi nel momento in cui si vuole leggere il dispositivo con la file operation dev_read().
 * ```struct list_head rcu_head``` rappresenta la testa della lista RCU i cui nodi mantengono i metadati di ciascun blocco di memoria (oltre ai puntatori al nodo precedente e successivo all'interno della lista doppiamente collegata).
 
 ### Metadati dei blocchi
@@ -56,7 +56,7 @@ A supporto delle operazioni del modulo vengono utilizzate anche delle strutture 
   ```
 * ```uint64_t is_mounted``` indica se il file system risulta correntemente montato all'interno del sistema o meno. Viene consultato all'inizio di qualunque system call e file operation per stabilire se l'operazione può essere eseguita o meno.
 * ```struct mutex write_mutex``` è il mutex utilizzato per coordinare tra loro le operazioni di scrittura sul dispositivo (in particolare le chiamate a put_data() e invalidate_data()).
-* ```struct mutex off_mutex``` è il mutex utilizzato per coordinare tra loro le chiamate a dev_read() che, di fatto, richiedono molta attenzione poiché utilizzano dati condivisi come il puntatore loff_t *off, che punta all'offset del file da cui far partire la lettura, e la lista collegata di struct sorted_node, che permette di leggere i blocchi validi nell'ordine dato dal loro timestamp (write_counter) e i cui dettagli sono riportati di seguito.
+* ```struct mutex off_mutex``` è il mutex utilizzato per coordinare tra loro le chiamate a dev_read() che, di fatto, richiedono molta attenzione poiché utilizzano dati condivisi come il puntatore loff_t *off, che punta all'offset del file da cui far partire la lettura, e la lista collegata di struct sorted_node, che permette di leggere i blocchi validi nell'ordine dato dal loro timestamp (*write_counter*) e i cui dettagli sono riportati di seguito.
 
 ```
 struct sorted_node {
@@ -74,7 +74,7 @@ struct sorted_node {
 Il file system viene anzitutto creato con l'ausilio di un software di livello user. Durante la fase di creazione del file system, vengono inizializzati il superblocco, l'inode del file e i data block (coi relativi metadati); tutti i data block inizialmente non validi vengono inizializzati a zero.
 
 ### Montaggio
-Il montaggio vero e proprio del file system viene implementato da software di livello kernel. Qui vengono inizializzati i due mutex (write_mutex e off_mutex) e viene impostato a 1 il valore di is_mounted con una chiamata a __sync_val_compare_and_swap() (in modo tale che il settaggio della variabile avvenga in modo atomico); se is_mounted valeva già 1, allora l'operazione di montaggio termina con un errore. Dopodiché, viene definita e popolata la RCU list puntata dall'ultimo campo del superblocco, in modo tale da avere un supporto rapido per stabilire i valori di write_counter e is_valid di ogni singolo blocco senza la necessità di scandire tutti i blocchi fisici all'interno del dispositivo. Infine, viene effettuato un controllo sul numero di blocchi realmente esistenti all'interno del dispositivo: se eccede il valore di NBLOCKS definito come parametro all'interno del Makefile del progetto, vuol dire che si è verificato un problema interno e, come previsto dalle specifiche, l'operazione di montaggio termina con un errore.
+Il montaggio vero e proprio del file system viene implementato da software di livello kernel. Qui vengono inizializzati i due mutex (*write_mutex* e *off_mutex*) e viene impostato a 1 il valore di is_mounted con una chiamata a __sync_val_compare_and_swap() (in modo tale che il settaggio della variabile avvenga in modo atomico); se is_mounted valeva già 1, allora l'operazione di montaggio termina con un errore. Dopodiché, viene definita e popolata la RCU list puntata dall'ultimo campo del superblocco, in modo tale da avere un supporto rapido per stabilire i valori di *write_counter* e *is_valid* di ogni singolo blocco senza la necessità di scandire tutti i blocchi fisici all'interno del dispositivo. Infine, viene effettuato un controllo sul numero di blocchi realmente esistenti all'interno del dispositivo: se eccede il valore di NBLOCKS definito come parametro all'interno del Makefile del progetto, vuol dire che si è verificato un problema interno e, come previsto dalle specifiche, l'operazione di montaggio termina con un errore.
 
 Affinché il dispositivo abbia la possibilità di essere montato ovunque all'interno del file system del sistema, l'operazione di montaggio viene eseguita mediante il seguente comando shell:
   ```
@@ -82,11 +82,37 @@ Affinché il dispositivo abbia la possibilità di essere montato ovunque all'int
   ```
 dove $(MOUNT_DIR) corrisponde alla directory dove si vuole montare il dispositivo.
 
-## Smontaggio
+### Smontaggio
 L'operazione di smontaggio viene implementata dallo stesso software di livello kernel che prevede l'operazione di montaggio. Qui il valore di is_mounted viene riportato a 0 in modo atomico tramite una chiamata a __sync_val_compare_and_swap(); se is_mounted valeva già 0, vuol dire che il file system era già smontato e l'operazione di smontaggio termina con un errore.
 
 ## System call
-TODO
+### int put_data(char *source, size_t size)
+1. Vengono effettuati dei sanity check in cui si verificano le seguenti condizioni:
+   * is_mounted == 1
+   * size <= 4092 (che corrisponde alla dimensione massima del payload all'interno di un singolo blocco)
+   * source != NULL
+2. Mediante una chiamata a copy_from_user(), il contenuto di *source* viene riversato in un buffer di livello kernel (_char *kernel_lvl_src_).
+3. All'interno di un ciclo list_for_each_entry_rcu(), in cui si itera nella RCU list, si cerca un blocco libero in cui riportare i dati in input. Nel caso in cui non esiste, la system call termina con l'errore ENOMEM; in caso contrario, si ricorre a una chiamata a list_replace_rcu() per sostituire il nodo associato al blocco libero trovato con un nuovo nodo, in cui sono riportati i valori corretti di *write_counter* (= vecchio *total_writes+1*) e di *is_valid* (1).
+4. Viene sovrascritto il superblocco del dispositivo, in cui viene aggiornato il valore di *total_writes*.
+5. Viene sovrascritto il blocco dati precedentemente individuato, aggiornandone sia il contenuto che i metadati (*write_counter* = vecchio *total_writes+1* e *is_valid* = 1).
+6. Mediante una chiamata a synchronize_rcu(), si fa in modo che il thread scrittore attenda la terminazione del grace period prima di procedere e deallocare il vecchio nodo della RCU list che è stato sostituito.
+
+### int get_data(int offset, char *destination, size_t size)
+1. Vengono effettuati dei sanity check in cui si verificano le seguenti condizioni:
+   * is_mounted == 1
+   * destination != NULL
+   * 0 <= offset < NBLOCKS
+2. All'interno di un ciclo list_for_each_entry_rcu(), si cerca il blocco di indice *offset+2* (poiché la RCU list comprende anche superblocco e inode del file e il parametro offset considera esclusivamente i blocchi dati). Se il blocco è invalido, la system call termina con l'errore -ENODATA; in caso contrario, si procede con gli step successivi.
+3. I dati del blocco target vengono letti e riversati in un buffer di livello kernel.
+4. Mediante una chiamata a copy_to_user(), il contenuto del buffer di livello kernel viene riportato all'interno di *destination*.
+
+### int invalidate_data(int offset)
+1. Vengono effettuati dei sanity check in cui si verificano le seguenti condizioni:
+   * is_mounted == 1
+   * 0 <= offset < NBLOCKS
+2. All'interno di un ciclo list_for_each_entry_rcu(), si cerca il blocco di indice *offset+2*. Se il blocco era già invalido, la system call termina con l'errore -ENODATA; in caso contrario, si ricorre a una chiamata a list_replace_rcu() per sostituire il nodo associato al blocco target con un nuovo nodo, in cui è riportato il valore corretto *is_valid* (0).
+3. Viene sovrascritto il data block target, aggiornandone il metadato *is_valid*, che viene posto anche qui pari a zero.
+4. Mediante una chiamata a synchronize_rcu(), si fa in modo che il chiamante attenda la terminazione del grace period prima di procedere e deallocare il vecchio nodo della RCU list che è stato sostituito.
 
 ## File operation
 TODO
