@@ -26,7 +26,7 @@ Le file operation, invece, sono riportate di seguito:
 Le specifiche del progetto prevedono anche le seguenti proprietà:
 * A compile-time deve essere stabilito se le scritture derivanti dalla system call put_data() devono essere effettuate in maniera sincrona oppure tramite il page-cache write back daemon.
 * A compile-time deve essere stabilito anche il valore di NBLOCKS, che è il numero di blocchi massimo che possono comporre il dispositivo. Se durante l'operazione di montaggio del device risulta un numero di blocchi realmente esistenti maggiore di NBLOCKS, il montaggio stesso deve fallire.
-* Il dispositivo deve poter essere montato su qualunque directory del file system.
+* Il dispositivo deve poter essere montato su qualunque directory del file system del sistema.
 * Il device driver può supportare un solo montaggio per volta.
 * Quando il dispositivo non è montato, qualunque system call o file operation deve fallire restituendo l'errore ENODEV.
 
@@ -70,7 +70,20 @@ struct sorted_node {
 * ```struct sorted_node *next``` è il puntatore al nodo successivo della lista collegata.
 
 ## Montaggio e smontaggio del file system
-TODO
+### Creazione
+Il file system viene anzitutto creato con l'ausilio di un software di livello user. Durante la fase di creazione del file system, vengono inizializzati il superblocco, l'inode del file e i data block (coi relativi metadati); tutti i data block inizialmente non validi vengono inizializzati a zero.
+
+### Montaggio
+Il montaggio vero e proprio del file system viene implementato da software di livello kernel. Qui vengono inizializzati i due mutex (write_mutex e off_mutex) e viene impostato a 1 il valore di is_mounted con una chiamata a __sync_val_compare_and_swap() (in modo tale che il settaggio della variabile avvenga in modo atomico); se is_mounted valeva già 1, allora l'operazione di montaggio termina con un errore. Dopodiché, viene definita e popolata la RCU list puntata dall'ultimo campo del superblocco, in modo tale da avere un supporto rapido per stabilire i valori di write_counter e is_valid di ogni singolo blocco senza la necessità di scandire tutti i blocchi fisici all'interno del dispositivo. Infine, viene effettuato un controllo sul numero di blocchi realmente esistenti all'interno del dispositivo: se eccede il valore di NBLOCKS definito come parametro all'interno del Makefile del progetto, vuol dire che si è verificato un problema interno e, come previsto dalle specifiche, l'operazione di montaggio termina con un errore.
+
+Affinché il dispositivo abbia la possibilità di essere montato ovunque all'interno del file system del sistema, l'operazione di montaggio viene eseguita mediante il seguente comando shell:
+  ```
+  mount -o loop -t singlefilefs image $(MOUNT_DIR)
+  ```
+dove $(MOUNT_DIR) corrisponde alla directory dove si vuole montare il dispositivo.
+
+## Smontaggio
+L'operazione di smontaggio viene implementata dallo stesso software di livello kernel che prevede l'operazione di montaggio. Qui il valore di is_mounted viene riportato a 0 in modo atomico tramite una chiamata a __sync_val_compare_and_swap(); se is_mounted valeva già 0, vuol dire che il file system era già smontato e l'operazione di smontaggio termina con un errore.
 
 ## System call
 TODO
