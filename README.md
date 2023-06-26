@@ -66,7 +66,7 @@ struct sorted_node {
 }
 ```
 * ```int node_index``` indica l'indice del blocco di riferimento.
-* ```unsigned int write_counter``` indica il timestamp di scrittura del blocco di riferimento. Nel momento in cui viene creata la lista collegata di struct sorted_node, viene sfruttato proprio questo campo per stabilire l'ordine con cui i nodi devono essere disposti all'interno della lista stessa.
+* ```unsigned int write_counter``` indica il timestamp di scrittura del blocco di riferimento. Nel momento in cui viene creata la lista collegata di *struct sorted_node*, viene sfruttato proprio questo campo per stabilire l'ordine con cui i nodi devono essere disposti all'interno della lista stessa.
 * ```struct sorted_node *next``` è il puntatore al nodo successivo della lista collegata.
 
 ## Montaggio e smontaggio del file system
@@ -115,7 +115,24 @@ L'operazione di smontaggio viene implementata dallo stesso software di livello k
 4. Mediante una chiamata a synchronize_rcu(), si fa in modo che il chiamante attenda la terminazione del grace period prima di procedere e deallocare il vecchio nodo della RCU list che è stato sostituito.
 
 ## File operation
-TODO
+### int dev_open(struct inode *inode, struct file *file)
+1. Vengono effettuati dei sanity check in cui si verificano le seguenti condizioni:
+   * is_mounted == 1
+   * Il file viene aperto in modalità read only
+2. Il dispositivo viene effettivamente aperto.
+
+### int dev_release(struct inode *inode, struct file *file)
+1. Viene effettuato il seguente sanity check:
+   * is_mounted == 1
+2. Il dispositivo viene effettivamente chiuso.
+
+### ssize_t dev_read(struct file *filp, char *buf, size_t len, loff_t *off)
+__Premessa:__ l'implementazione di questa funzione tiene conto del fatto che può essere invocata da parte di una funzione user-level (e.g. cat) all'interno di un loop, dove ad esempio ciascuna iterazione corrisponde alla lettura di un blocco. Ad esempio, un'unica chiamata al comando cat porta a molteplici invocazioni a dev_read(), una per ciascun blocco valido. Di conseguenza, le operazioni implementate all'interno di dev_read() sono quelle illustrate di seguito.
+1. Viene effettuato il seguente sanity check:
+   * is_mounted == 1
+2. Se il valore puntato da *off* vale zero, vuol dire che si tratta della prima chiamata alla funzione durante la lettura del dispositivo: in tal caso, è necessario costruire la lista collegata di *struct sorted_node* che stabilisce un ordinamento dei soli blocchi validi in base al campo *write_counter*. Al termine della definizione della lista, si pone la variabile puntata da *off* a un valore diverso da zero per segnalare che non si è più alla prima iterazione e non deve essere creata la lista collegata alle successive chiamate a dev_read().
+3. Se la lista collegata è non vuota e il parametro *len* di dev_read() è non nullo, vuol dire che vi sono ancora dei dati da leggere, per cui viene restituito all'utente il contenuto (o la porzione del contenuto, in base al valore di *len*) del prossimo blocco da leggere, che è proprio il blocco associato al nodo in testa alla lista di *struct sorted_node*. Il passaggio dei dati allo user avviene mediante la funzione copy_to_user() e, dopo la lettura, il nodo in testa alla lista viene rimosso e deallocato in modo tale che, eventualmente, si possa leggere il nodo successivo. Come ultima cosa, viene restituito al chiamante il numero di byte effettivamente letti: se tale numero è maggiore di zero, il chiamante invocherà nuovamente la funzione dev_read() in un'altra iterazione.
+4. Nel momento in cui non vi sono più dati da leggere, dev_read() restituisce 0, il che comporta l'assegnazione del valore 0 alla variabile puntata da *off* e l'uscita dal loop di invocazioni a dev_read() da parte del codice di livello user sovrastante.
 
 ## Sincronizzazione
 TODO
