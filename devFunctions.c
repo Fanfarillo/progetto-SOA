@@ -1,3 +1,11 @@
+/* DISCLAIMER: per l'acquisizione dei mutex write_mutex e off_mutex si è scelto di utilizzare la funzione mutex_trylock()
+ * anziché la funzione mutex_lock() (e quindi di gestire le retry dell'acquisizione del lock a livello user) poiché ho
+ * avuto problemi con l'esecuzione concorrente nel caso in cui si utilizza mutex_lock(): in particolare, se due thread
+ * provano ad acquisire uno stesso lock concorrentemente, solo un thread riesce ad acquisirlo mentre l'altro resta in
+ * attesa (il che è corretto). Tuttavia, quando il primo thread rilascia il lock, l'altro thread resta in attesa, causando
+ * un deadlock.
+ */
+
 #include <linux/fs.h>
 #include <linux/init.h>
 #include <linux/kernel.h>

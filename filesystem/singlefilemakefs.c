@@ -131,7 +131,7 @@ int main(int argc, char *argv[])
 	fflush(stdout);
 
 	//write file datablocks
-	for (block_index=0; block_index<num_data_blocks; block_index++) {
+	for(block_index=0; block_index<num_data_blocks; block_index++) {
 
 		//caso in cui ci sono effettivamente delle informazioni da riportare nel blocco block_index
 		if (block_index < num_data_blocks_to_write) {

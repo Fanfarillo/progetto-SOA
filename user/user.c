@@ -66,7 +66,7 @@ void clear_stdin_after_fgets(char *source, int source_size) {
 
     int i;
 
-    for (i=0; i<source_size; i++) {
+    for(i=0; i<source_size; i++) {
         if (source[i] == '\n')
             return;
 

@@ -129,7 +129,7 @@ void *invoke_get_data(void *arg) {
 void *invoke_invalidate_data(void *arg) {
 
     pthread_t tid;
-    int offset;
+    int offset; //parametro della system call invalidate_data()
     int ret;
     unsigned long timestamp;
 
@@ -273,7 +273,7 @@ int main(int argc, char **argv) {
     }
 
     //attesa della terminazione di tutti i thread child
-    for (thread_index=0; thread_index<NTHREADS; thread_index++) {
+    for(thread_index=0; thread_index<NTHREADS; thread_index++) {
         pthread_join(tids[thread_index], NULL);
     }
 
