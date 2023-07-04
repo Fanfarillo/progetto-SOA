@@ -6,6 +6,7 @@
  * un deadlock.
  */
 
+#include <linux/atomic.h>
 #include <linux/fs.h>
 #include <linux/init.h>
 #include <linux/kernel.h>
@@ -43,17 +44,23 @@ asmlinkage int sys_put_data(char *source, size_t size)
     struct rcu_node *curr_node;
     int old_total_writes;   //valore di total_writes originariamente letto dal superblocco (se la put va a buon fine, verrà incrementato di 1)
 
+    //incremento del contatore atomico degli utilizzi del file system
+    atomic_fetch_add(1, &(au_info.usages));
+
     //sanity checks
     if (!au_info.is_mounted) {
         printk("%s: impossibile eseguire la system call put_data(): il file system non è stato montato\n", MOD_NAME);
+        atomic_fetch_add(-1, &(au_info.usages));
         return -ENODEV; //-ENODEV = file system non esistente
     }
     if (size > DEFAULT_BLOCK_SIZE-METADATA_SIZE) {
         printk("%s: impossibile eseguire la system call put_data(): la dimensione dei dati da scrivere eccede la dimensione di un blocco\n", MOD_NAME);
+        atomic_fetch_add(-1, &(au_info.usages));
         return -EINVAL; //-EINVAL = parametri non validi (in questo caso size_t size)
     }
     if (source == NULL) {
         printk("%s: impossibile eseguire la system call put_data(): non vi sono dati da scrivere\n", MOD_NAME);
+        atomic_fetch_add(-1, &(au_info.usages));
         return -EINVAL; //-EINVAL = parametri non validi (in questo caso size_t size e/o char *source)
     }
 
@@ -65,6 +72,7 @@ asmlinkage int sys_put_data(char *source, size_t size)
     kernel_lvl_src = kmalloc(bytes_to_write, GFP_KERNEL);
     if (!kernel_lvl_src) {
         printk("%s: impossibile eseguire la system call put_data(): si è verificato un errore con l'allocazione della memoria\n", MOD_NAME);
+        atomic_fetch_add(-1, &(au_info.usages));
         return -ENOMEM; //-ENOMEM = errore di esaurimento della memoria         
     }
     ulong_ret = copy_from_user(kernel_lvl_src, source, (unsigned long)bytes_to_write);  //ulong_ret è il numero di byte NON copiati (su un massimo di bytrs_to_write).
@@ -74,6 +82,8 @@ asmlinkage int sys_put_data(char *source, size_t size)
     new_node = kmalloc(sizeof(struct rcu_node), GFP_KERNEL);
     if (!new_node) {
         printk("%s: impossibile eseguire la system call put_data(): si è verificato un errore con l'allocazione della memoria\n", MOD_NAME);
+        kfree(kernel_lvl_src);
+        atomic_fetch_add(-1, &(au_info.usages));
         return -ENOMEM; //-ENOMEM = errore di esaurimento della memoria 
     }
 
@@ -84,6 +94,9 @@ asmlinkage int sys_put_data(char *source, size_t size)
     ret = mutex_trylock(&(au_info.write_mutex));
     if (ret == 0) {
         printk("%s: impossibile eseguire la system call put_data(): il lock è occupato\n", MOD_NAME);
+        kfree(kernel_lvl_src);
+        kfree(new_node);
+        atomic_fetch_add(-1, &(au_info.usages));
         return -EBUSY;
     }
     #ifdef DEBUG
@@ -102,6 +115,8 @@ asmlinkage int sys_put_data(char *source, size_t size)
     sb_disk = get_superblock_info(global_sb);
     if (sb_disk == NULL) {
         printk("%s: impossibile eseguire la system call put_data(): si è verificato un errore col recupero dei dati del superblocco\n", MOD_NAME);
+        kfree(kernel_lvl_src);
+        kfree(new_node);
         rcu_read_unlock();
         mutex_unlock(&(au_info.write_mutex));
         #ifdef DEBUG
@@ -111,6 +126,7 @@ asmlinkage int sys_put_data(char *source, size_t size)
             printk("%s: [put_data] mutex_lock e rcu_read_lock correttamente rilasciati\n", MOD_NAME);
         }
         #endif
+        atomic_fetch_add(-1, &(au_info.usages));
         return -EIO; //-EIO = errore di input/output
     }
 
@@ -130,6 +146,8 @@ asmlinkage int sys_put_data(char *source, size_t size)
         index++;
         if (index == sb_disk->user_sb.total_data_blocks+2) {  //sono andato oltre l'ultimo nodo della RCU list; significa che nessun nodo rispetta la condizione (nessun nodo è libero).
             printk("%s: impossibile eseguire la system call put_data(): non ci sono blocchi liberi\n", MOD_NAME);
+            kfree(kernel_lvl_src);
+            kfree(new_node);
             rcu_read_unlock();
             mutex_unlock(&(au_info.write_mutex));
             #ifdef DEBUG
@@ -139,6 +157,7 @@ asmlinkage int sys_put_data(char *source, size_t size)
                 printk("%s: [put_data] mutex_lock e rcu_read_lock correttamente rilasciati\n", MOD_NAME);
             }
             #endif
+            atomic_fetch_add(-1, &(au_info.usages));
             return -ENOMEM; //-ENOMEM = errore di esaurimento della memoria
         }
 
@@ -151,13 +170,13 @@ asmlinkage int sys_put_data(char *source, size_t size)
     //inizializzazione del nuovo nodo
     new_node->write_counter = old_total_writes+1; //l'ultimo write_counter e total_writes assumono lo stesso valore: il nuovo write_counter deve essere pari a old_total_writes+1
     new_node->is_valid = 1;
-    //sostituzione di curr_node con new_node all'interno della RCU list
-    list_replace_rcu(&(curr_node->lh), &(new_node->lh));
 
     //scrittura vera e propria del superblocco del dispositivo
     ret = set_superblock_info(global_sb, new_node->write_counter);
     if (ret < 0) {
         printk("%s: impossibile eseguire la system call put_data(): si è verificato un errore con la scrittura dei dati sul superblocco\n", MOD_NAME);
+        kfree(kernel_lvl_src);
+        kfree(new_node);
         mutex_unlock(&(au_info.write_mutex));
         #ifdef DEBUG
         if (mutex_is_locked(&(au_info.write_mutex))) {
@@ -166,6 +185,7 @@ asmlinkage int sys_put_data(char *source, size_t size)
             printk("%s: [put_data] mutex_lock correttamente rilasciato\n", MOD_NAME);
         }
         #endif
+        atomic_fetch_add(-1, &(au_info.usages));
         return -EIO; //-EIO = errore di input/output        
     }
 
@@ -173,6 +193,8 @@ asmlinkage int sys_put_data(char *source, size_t size)
     ret = set_block_content(global_sb, index, new_node->write_counter, kernel_lvl_src, bytes_to_write);
     if (ret < 0) {
         printk("%s: impossibile eseguire la system call put_data(): si è verificato un errore con la scrittura dei dati sul blocco %d\n", MOD_NAME, index-2);
+        kfree(kernel_lvl_src);
+        kfree(new_node);
         mutex_unlock(&(au_info.write_mutex));
         #ifdef DEBUG
         if (mutex_is_locked(&(au_info.write_mutex))) {
@@ -181,8 +203,12 @@ asmlinkage int sys_put_data(char *source, size_t size)
             printk("%s: [put_data] mutex_lock correttamente rilasciato\n", MOD_NAME);
         }
         #endif
+        atomic_fetch_add(-1, &(au_info.usages));
         return -EIO; //-EIO = errore di input/output        
     }
+
+    //sostituzione di curr_node con new_node all'interno della RCU list
+    list_replace_rcu(&(curr_node->lh), &(new_node->lh));
 
     mutex_unlock(&(au_info.write_mutex));
     #ifdef DEBUG
@@ -194,9 +220,11 @@ asmlinkage int sys_put_data(char *source, size_t size)
     #endif
 
     synchronize_rcu();  //funzione che serve a far sì che lo scrittore attenda la terminazione del grace period
+    kfree(kernel_lvl_src);
     kfree(curr_node);
 
     printk("%s: la system call put_data() è stata eseguita con successo\n", MOD_NAME);
+    atomic_fetch_add(-1, &(au_info.usages));
     return index-2;
 
 }
@@ -214,13 +242,18 @@ asmlinkage int sys_get_data(int offset, char *destination, size_t size)
     int readable_bytes;             //numero di byte effettivamente presentu nel blocco target prima del terminatore di stringa ('\0')
     int lost_bytes_copy_to_user;    //numero di byte (tra quelli letti con kernel_read()) che non è stato possibile consegnare all'utente con copy_to_user()
 
+    //incremento del contatore atomico degli utilizzi del file system
+    atomic_fetch_add(1, &(au_info.usages));
+
     //sanity checks (notare che il caso size>DEFAULT_BLOCK_SIZE-METADATA_SIZE viene accettato e omologato al caso size==DEFAULT_BLOCK_SIZE-METADATA_SIZE)
     if (!au_info.is_mounted) {
         printk("%s: impossibile eseguire la system call get_data(): il file system non è stato montato\n", MOD_NAME);
+        atomic_fetch_add(-1, &(au_info.usages));
         return -ENODEV; //-ENODEV = file system non esistente
     }
     if (destination == NULL) {
         printk("%s: impossibile eseguire la system call get_data(): non è stato specificato alcun buffer di destinazione\n", MOD_NAME);
+        atomic_fetch_add(-1, &(au_info.usages));
         return -EINVAL; //-EINVAL = parametri non validi (in questo caso char *destination)
     }
 
@@ -244,6 +277,7 @@ asmlinkage int sys_get_data(int offset, char *destination, size_t size)
         #ifdef DEBUG
         printk("%s: [get_data] rcu_read_lock correttamente rilasciato\n", MOD_NAME);
         #endif
+        atomic_fetch_add(-1, &(au_info.usages));
         return -EIO; //-EIO = errore di input/output
     }
     if (offset < 0 || offset >= sb_disk->user_sb.total_data_blocks) {    //stiamo assumendo offset che vanno da 0 a NBLOCKS-1
@@ -252,6 +286,7 @@ asmlinkage int sys_get_data(int offset, char *destination, size_t size)
         #ifdef DEBUG
         printk("%s: [get_data] rcu_read_lock correttamente rilasciato\n", MOD_NAME);
         #endif
+        atomic_fetch_add(-1, &(au_info.usages));
         return -EINVAL; //-EINVAL = parametri non validi (in questo caso int offset)
     }
 
@@ -277,6 +312,7 @@ asmlinkage int sys_get_data(int offset, char *destination, size_t size)
         #ifdef DEBUG
         printk("%s: [get_data] rcu_read_lock correttamente rilasciato\n", MOD_NAME);
         #endif
+        atomic_fetch_add(-1, &(au_info.usages));
         return -ENODATA; //-ENODATA = nessun dato disponibile
     }
 
@@ -288,6 +324,7 @@ asmlinkage int sys_get_data(int offset, char *destination, size_t size)
         #ifdef DEBUG
         printk("%s: [get_data] rcu_read_lock correttamente rilasciato\n", MOD_NAME);
         #endif
+        atomic_fetch_add(-1, &(au_info.usages));
         return -EIO; //-EIO = errore di input/output
     }
 
@@ -299,6 +336,7 @@ asmlinkage int sys_get_data(int offset, char *destination, size_t size)
         #ifdef DEBUG
         printk("%s: [get_data] rcu_read_lock correttamente rilasciato\n", MOD_NAME);
         #endif
+        atomic_fetch_add(-1, &(au_info.usages));
         return 0;
     }
     else if (readable_bytes > 0 && readable_bytes < size)
@@ -313,6 +351,7 @@ asmlinkage int sys_get_data(int offset, char *destination, size_t size)
     #endif
 
     printk("%s: la system call get_data() è stata eseguita con successo\n", MOD_NAME);
+    atomic_fetch_add(-1, &(au_info.usages));
     return readable_bytes - lost_bytes_copy_to_user;
 
 }
@@ -329,9 +368,13 @@ asmlinkage int sys_invalidate_data(int offset)
     struct rcu_node *new_node;
     struct rcu_node *curr_node;
 
+    //incremento del contatore atomico degli utilizzi del file system
+    atomic_fetch_add(1, &(au_info.usages));
+
     //sanity checks
     if (!au_info.is_mounted) {
         printk("%s: impossibile eseguire la system call invalidate_data(): il file system non è stato montato\n", MOD_NAME);
+        atomic_fetch_add(-1, &(au_info.usages));
         return -ENODEV; //-ENODEV = file system non esistente
     }
 
@@ -339,6 +382,7 @@ asmlinkage int sys_invalidate_data(int offset)
     new_node = kmalloc(sizeof(struct rcu_node), GFP_KERNEL);
     if (!new_node) {
         printk("%s: impossibile eseguire la system call invalidate_data(): si è verificato un errore con l'allocazione della memoria\n", MOD_NAME);
+        atomic_fetch_add(-1, &(au_info.usages));
         return -ENOMEM; //-ENOMEM = errore di esaurimento della memoria 
     }
 
@@ -349,6 +393,8 @@ asmlinkage int sys_invalidate_data(int offset)
     ret = mutex_trylock(&(au_info.write_mutex));
     if (ret == 0) {
         printk("%s: impossibile eseguire la system call put_data(): il lock è occupato\n", MOD_NAME);
+        kfree(new_node);
+        atomic_fetch_add(-1, &(au_info.usages));
         return -EBUSY;
     }
     #ifdef DEBUG
@@ -367,6 +413,7 @@ asmlinkage int sys_invalidate_data(int offset)
     sb_disk = get_superblock_info(global_sb);
     if (sb_disk == NULL) {
         printk("%s: impossibile eseguire la system call invalidate_data(): si è verificato un errore col recupero dei dati del superblocco\n", MOD_NAME);
+        kfree(new_node);
         rcu_read_unlock();
         mutex_unlock(&(au_info.write_mutex));
         #ifdef DEBUG
@@ -376,10 +423,12 @@ asmlinkage int sys_invalidate_data(int offset)
             printk("%s: [invalidate_data] mutex_lock e rcu_read_lock correttamente rilasciati\n", MOD_NAME);
         }
         #endif
+        atomic_fetch_add(-1, &(au_info.usages));
         return -EIO; //-EIO = errore di input/output
     }
     if (offset < 0 || offset >= sb_disk->user_sb.total_data_blocks) {    //stiamo assumendo offset che vanno da 0 a NBLOCKS-1
         printk("%s: impossibile eseguire la system call invalidate_data(): il blocco specificato (%d) non esiste\n", MOD_NAME, offset);
+        kfree(new_node);
         rcu_read_unlock();
         mutex_unlock(&(au_info.write_mutex));
         #ifdef DEBUG
@@ -389,6 +438,7 @@ asmlinkage int sys_invalidate_data(int offset)
             printk("%s: [invalidate_data] mutex_lock e rcu_read_lock correttamente rilasciati\n", MOD_NAME);
         }
         #endif
+        atomic_fetch_add(-1, &(au_info.usages));
         return -EINVAL; //-EINVAL = parametri non validi (in questo caso int offset)
     }
 
@@ -410,6 +460,7 @@ asmlinkage int sys_invalidate_data(int offset)
     //check sulla validità del blocco target
     if(!(curr_node->is_valid)) {
         printk("%s: impossibile eseguire la system call invalidate_data(): il blocco specificato (%d) è già invalido\n", MOD_NAME, offset);
+        kfree(new_node);
         rcu_read_unlock();
         mutex_unlock(&(au_info.write_mutex));
         #ifdef DEBUG
@@ -419,6 +470,7 @@ asmlinkage int sys_invalidate_data(int offset)
             printk("%s: [invalidate_data] mutex_lock e rcu_read_lock correttamente rilasciati\n", MOD_NAME);
         }
         #endif
+        atomic_fetch_add(-1, &(au_info.usages));
         return -ENODATA; //-ENODATA = nessun dato disponibile
     }
     rcu_read_unlock();
@@ -429,13 +481,12 @@ asmlinkage int sys_invalidate_data(int offset)
     //inizializzazione del nuovo nodo
     new_node->write_counter = curr_node->write_counter; //non vado a modificare il write counter (non si tratta di un'operazione di put_data)
     new_node->is_valid = 0;
-    //sostituzione di curr_node con new_node all'interno della RCU list
-    list_replace_rcu(&(curr_node->lh), &(new_node->lh));
 
     //invalidazione vera e propria del blocco all'interno del dispositivo (interessano in particolar modo solo i metadati)
     ret = invalidate_block_content(global_sb, offset+2);
     if (ret < 0) {
         printk("%s: impossibile eseguire la system call invalidate_data(): si è verificato un errore con l'invalidazione dei dati sul blocco %d\n", MOD_NAME, offset);
+        kfree(new_node);
         mutex_unlock(&(au_info.write_mutex));
         #ifdef DEBUG
         if (mutex_is_locked(&(au_info.write_mutex))) {
@@ -444,8 +495,12 @@ asmlinkage int sys_invalidate_data(int offset)
             printk("%s: [invalidate_data] mutex_lock correttamente rilasciato\n", MOD_NAME);
         }
         #endif
+        atomic_fetch_add(-1, &(au_info.usages));
         return -EIO; //-EIO = errore di input/output        
     }
+
+    //sostituzione di curr_node con new_node all'interno della RCU list
+    list_replace_rcu(&(curr_node->lh), &(new_node->lh));
 
     mutex_unlock(&(au_info.write_mutex));
     #ifdef DEBUG
@@ -460,6 +515,7 @@ asmlinkage int sys_invalidate_data(int offset)
     kfree(curr_node);
 
     printk("%s: la system call invalidate_data() è stata eseguita con successo\n", MOD_NAME);
+    atomic_fetch_add(-1, &(au_info.usages));
     return 0;
 
 }
@@ -493,6 +549,9 @@ static ssize_t dev_read(struct file *filp, char *buf, size_t len, loff_t *off) {
     struct rcu_node *curr_rcu_node;
     struct sorted_node *prev_sorted_node;
 
+    //incremento del contatore atomico degli utilizzi del file system
+    atomic_fetch_add(1, &(au_info.usages));
+
     bh = NULL;
     the_inode = filp->f_inode;
     file_size = the_inode->i_size;
@@ -502,6 +561,7 @@ static ssize_t dev_read(struct file *filp, char *buf, size_t len, loff_t *off) {
     //sanity check
     if (!au_info.is_mounted) {
         printk("%s: impossibile leggere il dispositivo: il file system non è stato montato\n", MOD_NAME);
+        atomic_fetch_add(-1, &(au_info.usages));
         return -ENODEV; //-ENODEV = file system non esistente
     }
 
@@ -513,6 +573,7 @@ static ssize_t dev_read(struct file *filp, char *buf, size_t len, loff_t *off) {
         ret = mutex_trylock(&(au_info.off_mutex));
         if (ret == 0) {
             printk("%s: impossibile leggere il dispositivo: il lock è occupato\n", MOD_NAME);
+            atomic_fetch_add(-1, &(au_info.usages));
             return -EBUSY;
         }
         #ifdef DEBUG
@@ -540,6 +601,7 @@ static ssize_t dev_read(struct file *filp, char *buf, size_t len, loff_t *off) {
                 printk("%s: [dev_read] mutex_lock e rcu_read_lock correttamente rilasciati\n", MOD_NAME);
             }
             #endif
+            atomic_fetch_add(-1, &(au_info.usages));
             return -EIO; //-EIO = errore di input/output
         }
 
@@ -569,6 +631,7 @@ static ssize_t dev_read(struct file *filp, char *buf, size_t len, loff_t *off) {
                         printk("%s: [dev_read] mutex_lock e rcu_read_lock correttamente rilasciati\n", MOD_NAME);
                     }
                     #endif
+                    atomic_fetch_add(-1, &(au_info.usages));
                     return -EIO; //-EIO = errore di input/output            
                 }
 
@@ -597,6 +660,7 @@ static ssize_t dev_read(struct file *filp, char *buf, size_t len, loff_t *off) {
                 printk("%s: [dev_read] mutex_lock e rcu_read_lock correttamente rilasciati\n", MOD_NAME);
             }
             #endif
+            atomic_fetch_add(-1, &(au_info.usages));
             return 0;
         }
         else if (len + offset > DEFAULT_BLOCK_SIZE)           
@@ -618,6 +682,7 @@ static ssize_t dev_read(struct file *filp, char *buf, size_t len, loff_t *off) {
                 printk("%s: [dev_read] mutex_lock e rcu_read_lock correttamente rilasciati\n", MOD_NAME);
             }
             #endif
+            atomic_fetch_add(-1, &(au_info.usages));
 	        return -EIO;
         }
 
@@ -631,7 +696,8 @@ static ssize_t dev_read(struct file *filp, char *buf, size_t len, loff_t *off) {
         //kfree() del nodo appena attraversato poiché non serve più
         kfree(prev_sorted_node);
 
-        printk("%s: block %d successfully read\n", MOD_NAME, block_to_read);        
+        printk("%s: block %d successfully read\n", MOD_NAME, block_to_read);
+        atomic_fetch_add(-1, &(au_info.usages));       
         return len-ret;
 
     }
@@ -646,6 +712,7 @@ static ssize_t dev_read(struct file *filp, char *buf, size_t len, loff_t *off) {
             printk("%s: [dev_read] mutex_lock e rcu_read_lock correttamente rilasciati\n", MOD_NAME);
         }
         #endif
+        atomic_fetch_add(-1, &(au_info.usages));
         return 0;
 
     }
@@ -655,17 +722,23 @@ static ssize_t dev_read(struct file *filp, char *buf, size_t len, loff_t *off) {
 //la dev_open() apre il dispositivo (deve farlo in modalità di sola scrittura).
 static int dev_open(struct inode *inode, struct file *file) {
 
+    //incremento del contatore atomico degli utilizzi del file system
+    atomic_fetch_add(1, &(au_info.usages));
+
     //sanity checks
     if (!au_info.is_mounted) {
         printk("%s: impossibile aprire il dispositivo: il file system non è stato montato\n", MOD_NAME);
+        atomic_fetch_add(-1, &(au_info.usages));
         return -ENODEV; //-ENODEV = file system non esistente
     }
     if (file->f_mode & FMODE_WRITE) {    //il dispositivo deve essere aperto in read only
         printk("%s: impossibile aprire il dispositivo in modalità scrittura\n", MOD_NAME);
+        atomic_fetch_add(-1, &(au_info.usages));
         return -EPERM;  //-EPERM = operazione non consentita
     }
 
     printk("%s: device successfully opened\n", MOD_NAME);
+    atomic_fetch_add(-1, &(au_info.usages));
   	return 0;
 
 }
@@ -673,13 +746,18 @@ static int dev_open(struct inode *inode, struct file *file) {
 //la dev_release() chiude il dispositivo.
 static int dev_release(struct inode *inode, struct file *file) {
 
+    //incremento del contatore atomico degli utilizzi del file system
+    atomic_fetch_add(1, &(au_info.usages));
+
     //sanity checks
     if (!au_info.is_mounted) {
         printk("%s: impossibile chiudere il dispositivo: il file system non è stato montato\n", MOD_NAME);
+        atomic_fetch_add(-1, &(au_info.usages));
         return -ENODEV; //-ENODEV = file system non esistente
     }
 
     printk("%s: device successfully closed\n", MOD_NAME);
+    atomic_fetch_add(-1, &(au_info.usages));
   	return 0;
 
 }

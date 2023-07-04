@@ -21,10 +21,11 @@ void invalidate_operation(void);
 char multichoice(char *question, char choices[], int num)
 {
 	char input_str[3];
+    char *possib;
     int i, j;
 
 	//genera la stringa delle possibilità
-	char *possib = malloc(2*num*sizeof(char));
+	possib = malloc(2*num*sizeof(char));
 
     j=0;
 	for(i=0; i<num; i++) {
@@ -44,8 +45,10 @@ char multichoice(char *question, char choices[], int num)
 
 		//controlla se è un carattere valido
 		for(i=0; i<num; i++) {
-			if (c == choices[i])
+			if (c == choices[i]) {
+                free(possib);
 				return c;
+            }
 
 		}
 
@@ -136,6 +139,8 @@ void put_operation() {
         fflush(stdout);
     }
 
+    //cleanup
+    free(source);
     return;
 
 }
@@ -204,6 +209,8 @@ void get_operation() {
         fflush(stdout);
     }
 
+    //cleanup
+    free(destination);
     return;
 
 }

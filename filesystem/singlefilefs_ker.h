@@ -1,6 +1,7 @@
 #ifndef _ONEFILEFSKER_H
 #define _ONEFILEFSKER_H
 
+#include <linux/atomic.h>
 #include <linux/list.h>
 #include <linux/mutex.h>
 #include <linux/types.h>
@@ -27,6 +28,7 @@ struct rcu_node {
 
 struct auxiliary_info {
 	uint64_t is_mounted;
+	atomic_t usages;					//tiene traccia del numero di thread che stanno correntemente eseguendo una funzione del modulo; se è > 0, lo smontaggio viene impedito.
 	struct mutex write_mutex;			//serve a sincronizzare gli scrittori tra loro (ma non coi lettori).
 	struct mutex off_mutex;				//serve a sincronizzare gli aggiornamenti del parametro *off della funzione dev_read().
 };

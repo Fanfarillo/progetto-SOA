@@ -261,12 +261,16 @@ int main(int argc, char **argv) {
             default:
                 printf("[ERROR] Something went wrong during test execution.\n");
                 fflush(stdout);
+                free(tids);
+                pthread_barrier_destroy(&barrier);
                 return -1;
 
         }
         if (ret != 0) {
             printf("[ERRORE] Problema di creazione dei thread.\n");
             fflush(stdout);
+            free(tids);
+            pthread_barrier_destroy(&barrier);
             return -1;
         }
 

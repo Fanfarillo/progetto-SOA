@@ -8,12 +8,14 @@ override MOUNT_DIR = ./mount/
 
 all:
 	gcc filesystem/singlefilemakefs.c -o filesystem/singlefilemakefs
-	make -C /lib/modules/$(shell uname -r)/build M=$(PWD) modules
+#	make -C /lib/modules/$(shell uname -r)/build M=$(PWD) modules
+	make -C /lib/modules/$(shell uname -r)/build M=$(shell pwd) modules
 	gcc user/user.c -o user/user.o
 	gcc test/test.c -o test/test.o -lpthread
 
 clean:
-	make -C /lib/modules/$(shell uname -r)/build M=$(PWD) clean
+#	make -C /lib/modules/$(shell uname -r)/build M=$(PWD) clean
+	make -C /lib/modules/$(shell uname -r)/build M=$(shell pwd) clean
 	rm ./filesystem/singlefilemakefs
 
 del-image:

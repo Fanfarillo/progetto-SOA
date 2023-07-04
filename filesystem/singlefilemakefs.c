@@ -92,11 +92,13 @@ int main(int argc, char *argv[])
 	if (ret != nbytes) {
 		printf("The padding bytes are not written properly. Retry your mkfs\n");
 		fflush(stdout);
+		free(block_padding);
 		close(fd);
 		return -1;
 	}
 	printf("Padding in the superblock written sucessfully.\n");
 	fflush(stdout);
+	free(block_padding);
 
 	//write file inode
 	file_inode.mode = S_IFREG;
@@ -124,6 +126,7 @@ int main(int argc, char *argv[])
 	if (ret != nbytes) {
 		printf("The padding bytes are not written properly. Retry your mkfs\n");
 		fflush(stdout);
+		free(block_padding);
 		close(fd);
 		return -1;
 	}
@@ -132,6 +135,7 @@ int main(int argc, char *argv[])
 
 	//write file datablocks
 	for(block_index=0; block_index<num_data_blocks; block_index++) {
+		free(block_padding);	//deallocazione del vecchio block_padding
 
 		//caso in cui ci sono effettivamente delle informazioni da riportare nel blocco block_index
 		if (block_index < num_data_blocks_to_write) {
@@ -182,6 +186,7 @@ int main(int argc, char *argv[])
 			if (ret != nbytes) {
 				printf("The padding bytes are not written properly. Retry your mkfs\n");
 				fflush(stdout);
+				free(block_padding);
 				close(fd);
 				return -1;
 			}
@@ -198,6 +203,7 @@ int main(int argc, char *argv[])
 			if (ret != nbytes) {
 				printf("The padding bytes are not written properly. Retry your mkfs\n");
 				fflush(stdout);
+				free(block_padding);
 				close(fd);
 				return -1;
 			}
@@ -208,6 +214,7 @@ int main(int argc, char *argv[])
 
 	}
 
+	free(block_padding);
 	close(fd);	//chiusura del file descriptor (i.e. del dispositivo)
 	return 0;
 

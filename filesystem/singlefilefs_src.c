@@ -1,3 +1,4 @@
+#include <linux/atomic.h>
 #include <linux/buffer_head.h>
 #include <linux/fs.h>
 #include <linux/init.h>
@@ -190,9 +191,14 @@ static void singlefilefs_kill_superblock(struct super_block *s) {
     //qui iniziano le variabili locali definite direttamente da me
     long unsigned int cmp_swap_output;
 
+    if (atomic_read(&(au_info.usages)) != 0) {
+        printk("%s: impossible to unmount the file system: some thread is executing some fs operations\n", MOD_NAME);
+        return;
+    }
+
     cmp_swap_output = __sync_val_compare_and_swap(&(au_info.is_mounted), 1, 0);
     if (cmp_swap_output != 1) { //caso in cui il file system non risultava montato
-        printk("%s: impossible to unmount the file system\n", MOD_NAME);
+        printk("%s: impossible to unmount the file system: it was already unmounted\n", MOD_NAME);
         return;
     }
 
@@ -213,7 +219,7 @@ struct dentry *singlefilefs_mount(struct file_system_type *fs_type, int flags, c
     static DEFINE_MUTEX(o_mutex);   //dichiarazione e definizione del mutex per il parametro *off di dev_read()
     long unsigned int cmp_swap_output;
 
-    //inizializzazione dei campi di tipo struct mutex
+    //inizializzazione dei campi di tipo atomic_t e struct mutex
     au_info.write_mutex = w_mutex;
     au_info.off_mutex = o_mutex;
 
