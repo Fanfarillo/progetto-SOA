@@ -50,11 +50,13 @@ A supporto delle operazioni del modulo vengono utilizzate anche delle strutture 
   ```
   auxiliary_info {
     uint64_t is_mounted;
+    atomic_t usages;
     struct mutex write_mutex;
     struct mutex off_mutex;
   }
   ```
 * ```uint64_t is_mounted``` indica se il file system risulta correntemente montato all'interno del sistema o meno. Viene consultato all'inizio di qualunque system call e file operation per stabilire se l'operazione può essere eseguita o meno.
+* ```atomic_t usages``` indica il numero di thread che stanno utilizzando correntemente il file system. Quando è diverso da zero, il file system stesso non può essere smontato dal sistema.
 * ```struct mutex write_mutex``` è il mutex utilizzato per coordinare tra loro le operazioni di scrittura sul dispositivo (in particolare le chiamate a put_data() e invalidate_data()).
 * ```struct mutex off_mutex``` è il mutex utilizzato per coordinare tra loro le chiamate a dev_read() che, di fatto, richiedono molta attenzione poiché utilizzano dati condivisi come il puntatore loff_t *off, che punta all'offset del file da cui far partire la lettura, e la lista collegata di *struct sorted_node*, che permette di leggere i blocchi validi nell'ordine dato dal loro timestamp (*write_counter*) e i cui dettagli sono riportati di seguito.
 
@@ -74,7 +76,7 @@ struct sorted_node {
 Il file system viene anzitutto creato con l'ausilio di un software di livello user. Durante la fase di creazione del file system, vengono inizializzati il superblocco, l'inode del file e i data block (coi relativi metadati); tutti i data block inizialmente non validi vengono inizializzati a zero.
 
 ### Montaggio
-Il montaggio vero e proprio del file system viene implementato da software di livello kernel. Qui vengono inizializzati i due mutex (*write_mutex* e *off_mutex*) e viene impostato a 1 il valore di *is_mounted* con una chiamata a __sync_val_compare_and_swap() (in modo tale che il settaggio della variabile avvenga in modo atomico); se *is_mounted* valeva già 1, allora l'operazione di montaggio termina con un errore. Dopodiché, viene definita e popolata la RCU list puntata dall'ultimo campo del superblocco, in modo tale da avere un supporto rapido per stabilire i valori di *write_counter* e *is_valid* di ogni singolo blocco senza la necessità di scandire tutti i blocchi fisici all'interno del dispositivo. Infine, viene effettuato un controllo sul numero di blocchi realmente esistenti all'interno del dispositivo: se eccede il valore di NBLOCKS definito come parametro all'interno del Makefile del progetto, vuol dire che si è verificato un problema interno e, come previsto dalle specifiche, l'operazione di montaggio termina con un errore.
+Il montaggio vero e proprio del file system viene implementato da software di livello kernel. Qui vengono inizializzati i due mutex (*write_mutex* e *off_mutex*), viene impostato a 0 il valore di *usages* e viene impostato a 1 il valore di *is_mounted* con una chiamata a __sync_val_compare_and_swap() (in modo tale che il settaggio della variabile avvenga in modo atomico); se *is_mounted* valeva già 1, allora l'operazione di montaggio termina con un errore. Dopodiché, viene definita e popolata la RCU list puntata dall'ultimo campo del superblocco, in modo tale da avere un supporto rapido per stabilire i valori di *write_counter* e *is_valid* di ogni singolo blocco senza la necessità di scandire tutti i blocchi fisici all'interno del dispositivo. Infine, viene effettuato un controllo sul numero di blocchi realmente esistenti all'interno del dispositivo: se eccede il valore di NBLOCKS definito come parametro all'interno del Makefile del progetto, vuol dire che si è verificato un problema interno e, come previsto dalle specifiche, l'operazione di montaggio termina con un errore.
 
 Affinché il dispositivo abbia la possibilità di essere montato ovunque all'interno del file system del sistema, l'operazione di montaggio viene eseguita mediante il seguente comando shell:
   ```
@@ -83,56 +85,67 @@ Affinché il dispositivo abbia la possibilità di essere montato ovunque all'int
 dove $(MOUNT_DIR) corrisponde alla directory dove si vuole montare il dispositivo.
 
 ### Smontaggio
-L'operazione di smontaggio viene implementata dallo stesso software di livello kernel che prevede l'operazione di montaggio. Qui il valore di *is_mounted* viene riportato a 0 in modo atomico tramite una chiamata a __sync_val_compare_and_swap(); se *is_mounted* valeva già 0, vuol dire che il file system era già smontato e l'operazione di smontaggio termina con un errore.
+L'operazione di smontaggio viene implementata dallo stesso software di livello kernel che prevede l'operazione di montaggio. Il valore di *usages* viene controllato in modo tale che lo smontaggio fallisca se è maggiore di zero, e il valore di *is_mounted* viene riportato a 0 in maniera atomica tramite una chiamata a __sync_val_compare_and_swap(); se *is_mounted* valeva già 0, vuol dire che il file system era già smontato e l'operazione di smontaggio termina con un errore.
 
 ## System call
 ### int put_data(char *source, size_t size)
-1. Vengono effettuati dei sanity check in cui si verificano le seguenti condizioni:
+1. Il valore di *usages* viene incrementato di 1 in modo atomico mediante una chiamata ad atomic_fetch_add().
+2. Vengono effettuati dei sanity check in cui si verificano le seguenti condizioni:
    * is_mounted == 1
    * size <= 4092 (che corrisponde alla dimensione massima del payload all'interno di un singolo blocco)
    * source != NULL
-2. Mediante una chiamata a copy_from_user(), il contenuto di *source* viene riversato in un buffer di livello kernel (_char *kernel_lvl_src_).
-3. All'interno di un ciclo list_for_each_entry_rcu(), in cui si itera nella RCU list, si cerca un blocco libero in cui riportare i dati in input. Nel caso in cui non esiste, la system call termina con l'errore ENOMEM; in caso contrario, si ricorre a una chiamata a list_replace_rcu() per sostituire il nodo associato al blocco libero trovato con un nuovo nodo, in cui sono riportati i valori corretti di *write_counter* (= vecchio *total_writes*+1) e di *is_valid* (1).
-4. Viene sovrascritto il superblocco del dispositivo, in cui viene aggiornato il valore di *total_writes*.
-5. Viene sovrascritto il blocco dati precedentemente individuato, aggiornandone sia il contenuto che i metadati (*write_counter* = vecchio *total_writes*+1 e *is_valid* = 1).
-6. Mediante una chiamata a synchronize_rcu(), si fa in modo che il thread scrittore attenda la terminazione del grace period prima di procedere e deallocare il vecchio nodo della RCU list che è stato sostituito.
+3. Mediante una chiamata a copy_from_user(), il contenuto di *source* viene riversato in un buffer di livello kernel (_char *kernel_lvl_src_).
+4. All'interno di un ciclo list_for_each_entry_rcu(), in cui si itera nella RCU list, si cerca un blocco libero in cui riportare i dati in input. Nel caso in cui non esiste, la system call termina con l'errore ENOMEM; in caso contrario, si ricorre a una chiamata a list_replace_rcu() per sostituire il nodo associato al blocco libero trovato con un nuovo nodo, in cui sono riportati i valori corretti di *write_counter* (= vecchio *total_writes*+1) e di *is_valid* (1).
+5. Viene sovrascritto il superblocco del dispositivo, in cui viene aggiornato il valore di *total_writes*.
+6. Viene sovrascritto il blocco dati precedentemente individuato, aggiornandone sia il contenuto che i metadati (*write_counter* = vecchio *total_writes*+1 e *is_valid* = 1).
+7. Mediante una chiamata a synchronize_rcu(), si fa in modo che il thread scrittore attenda la terminazione del grace period prima di procedere e deallocare il vecchio nodo della RCU list che è stato sostituito.
+8. Il valore di *usages* viene decrementato di 1 in modo atomico mediante una chiamata ad atomic_fetch_add().
 
 ### int get_data(int offset, char *destination, size_t size)
-1. Vengono effettuati dei sanity check in cui si verificano le seguenti condizioni:
+1. Il valore di *usages* viene incrementato di 1 in modo atomico mediante una chiamata ad atomic_fetch_add().
+2. Vengono effettuati dei sanity check in cui si verificano le seguenti condizioni:
    * is_mounted == 1
    * destination != NULL
    * 0 <= offset < NBLOCKS
-2. All'interno di un ciclo list_for_each_entry_rcu(), si cerca il blocco di indice *offset*+2 (poiché la RCU list comprende anche superblocco e inode del file e il parametro *offset* considera esclusivamente i blocchi dati). Se il blocco è invalido, la system call termina con l'errore ENODATA; in caso contrario, si procede con gli step successivi.
-3. I dati del blocco target vengono letti e riversati in un buffer di livello kernel.
-4. Mediante una chiamata a copy_to_user(), il contenuto del buffer di livello kernel viene riportato all'interno di *destination*.
+3. All'interno di un ciclo list_for_each_entry_rcu(), si cerca il blocco di indice *offset*+2 (poiché la RCU list comprende anche superblocco e inode del file e il parametro *offset* considera esclusivamente i blocchi dati). Se il blocco è invalido, la system call termina con l'errore ENODATA; in caso contrario, si procede con gli step successivi.
+4. I dati del blocco target vengono letti e riversati in un buffer di livello kernel.
+5. Mediante una chiamata a copy_to_user(), il contenuto del buffer di livello kernel viene riportato all'interno di *destination*.
+6. Il valore di *usages* viene decrementato di 1 in modo atomico mediante una chiamata ad atomic_fetch_add().
 
 ### int invalidate_data(int offset)
-1. Vengono effettuati dei sanity check in cui si verificano le seguenti condizioni:
+1. Il valore di *usages* viene incrementato di 1 in modo atomico mediante una chiamata ad atomic_fetch_add().
+2. Vengono effettuati dei sanity check in cui si verificano le seguenti condizioni:
    * is_mounted == 1
    * 0 <= offset < NBLOCKS
-2. All'interno di un ciclo list_for_each_entry_rcu(), si cerca il blocco di indice *offset*+2. Se il blocco era già invalido, la system call termina con l'errore ENODATA; in caso contrario, si ricorre a una chiamata a list_replace_rcu() per sostituire il nodo associato al blocco target con un nuovo nodo, in cui è riportato il valore corretto di *is_valid* (0).
-3. Viene sovrascritto il data block target, aggiornandone il metadato *is_valid*, che viene posto anche qui pari a zero.
-4. Mediante una chiamata a synchronize_rcu(), si fa in modo che il chiamante attenda la terminazione del grace period prima di procedere e deallocare il vecchio nodo della RCU list che è stato sostituito.
+3. All'interno di un ciclo list_for_each_entry_rcu(), si cerca il blocco di indice *offset*+2. Se il blocco era già invalido, la system call termina con l'errore ENODATA; in caso contrario, si ricorre a una chiamata a list_replace_rcu() per sostituire il nodo associato al blocco target con un nuovo nodo, in cui è riportato il valore corretto di *is_valid* (0).
+4. Viene sovrascritto il data block target, aggiornandone il metadato *is_valid*, che viene posto anche qui pari a zero.
+5. Mediante una chiamata a synchronize_rcu(), si fa in modo che il chiamante attenda la terminazione del grace period prima di procedere e deallocare il vecchio nodo della RCU list che è stato sostituito.
+6. Il valore di *usages* viene decrementato di 1 in modo atomico mediante una chiamata ad atomic_fetch_add().
 
 ## File operation
 ### int dev_open(struct inode *inode, struct file *file)
-1. Vengono effettuati dei sanity check in cui si verificano le seguenti condizioni:
+1. Il valore di *usages* viene incrementato di 1 in modo atomico mediante una chiamata ad atomic_fetch_add().
+2. Vengono effettuati dei sanity check in cui si verificano le seguenti condizioni:
    * is_mounted == 1
    * Il file viene aperto in modalità read only.
-2. Il dispositivo viene effettivamente aperto.
+3. Il dispositivo viene effettivamente aperto.
+4. Il valore di *usages* viene decrementato di 1 in modo atomico mediante una chiamata ad atomic_fetch_add().
 
 ### int dev_release(struct inode *inode, struct file *file)
-1. Viene effettuato il seguente sanity check:
+1. Il valore di *usages* viene incrementato di 1 in modo atomico mediante una chiamata ad atomic_fetch_add().
+2. Viene effettuato il seguente sanity check:
    * is_mounted == 1
-2. Il dispositivo viene effettivamente chiuso.
+3. Il dispositivo viene effettivamente chiuso.
+4. Il valore di *usages* viene decrementato di 1 in modo atomico mediante una chiamata ad atomic_fetch_add().
 
 ### ssize_t dev_read(struct file *filp, char *buf, size_t len, loff_t *off)
 __Premessa:__ l'implementazione di questa funzione tiene conto del fatto che può essere invocata da parte di un comando o una funzione user-level (e.g. cat) all'interno di un loop, dove ciascuna iterazione può corrispondere alla lettura di un blocco. Ad esempio, un'unica chiamata al comando cat porta a molteplici invocazioni a dev_read(), una per ciascun blocco valido. Di conseguenza, le operazioni implementate all'interno di dev_read() sono quelle illustrate di seguito.
-1. Viene effettuato il seguente sanity check:
+1. Il valore di *usages* viene incrementato di 1 in modo atomico mediante una chiamata ad atomic_fetch_add().
+2. Viene effettuato il seguente sanity check:
    * is_mounted == 1
-2. Se il valore puntato da *off* vale zero, vuol dire che si tratta della prima chiamata a dev_read() durante la lettura del dispositivo: in tal caso, è necessario costruire la lista collegata di *struct sorted_node* che stabilisce un ordinamento dei soli blocchi validi in base al campo *write_counter*. Al termine della definizione della lista, si pone la variabile puntata da *off* a un valore diverso da zero per segnalare che non si è più alla prima iterazione e non deve essere creata la lista collegata alle successive chiamate a dev_read().
-3. Se la lista collegata è non vuota e il parametro *len* di dev_read() è non nullo, vuol dire che vi sono ancora dei dati da leggere, per cui viene restituito all'utente il contenuto (o la porzione del contenuto, in base al valore di *len*) del prossimo blocco da leggere, che è proprio il blocco associato al nodo in testa alla lista di *struct sorted_node*. Il passaggio dei dati allo user avviene mediante la funzione copy_to_user() e, dopo la lettura, il nodo in testa alla lista viene rimosso e deallocato in modo tale che poi, eventualmente, si possa leggere il nodo successivo. Come ultima cosa, viene restituito al chiamante il numero di byte effettivamente letti: se tale numero è maggiore di zero, il chiamante invocherà nuovamente la funzione dev_read() in un'altra iterazione.
-4. Nel momento in cui non vi sono più dati da leggere, dev_read() restituisce 0, il che comporta l'assegnazione del valore 0 alla variabile puntata da *off* e l'uscita dal loop di invocazioni a dev_read() da parte del codice di livello user sovrastante.
+3. Se il valore puntato da *off* vale zero, vuol dire che si tratta della prima chiamata a dev_read() durante la lettura del dispositivo: in tal caso, è necessario costruire la lista collegata di *struct sorted_node* che stabilisce un ordinamento dei soli blocchi validi in base al campo *write_counter*. Al termine della definizione della lista, si pone la variabile puntata da *off* a un valore diverso da zero per segnalare che non si è più alla prima iterazione e non deve essere creata la lista collegata alle successive chiamate a dev_read().
+4. Se la lista collegata è non vuota e il parametro *len* di dev_read() è non nullo, vuol dire che vi sono ancora dei dati da leggere, per cui viene restituito all'utente il contenuto (o la porzione del contenuto, in base al valore di *len*) del prossimo blocco da leggere, che è proprio il blocco associato al nodo in testa alla lista di *struct sorted_node*. Il passaggio dei dati allo user avviene mediante la funzione copy_to_user() e, dopo la lettura, il nodo in testa alla lista viene rimosso e deallocato in modo tale che poi, eventualmente, si possa leggere il nodo successivo. Come ultima cosa, viene restituito al chiamante il numero di byte effettivamente letti: se tale numero è maggiore di zero, il chiamante invocherà nuovamente la funzione dev_read() in un'altra iterazione.
+5. Nel momento in cui non vi sono più dati da leggere, dev_read() restituisce 0 dopo aver decrementato di 1 il valore di *usages* in modo atomico mediante una chiamata ad atomic_fetch_add(). Ciò comporta l'assegnazione del valore 0 alla variabile puntata da *off* e l'uscita dal loop di invocazioni a dev_read() da parte del codice di livello user sovrastante.
 
 ## Sincronizzazione
 * ```get_data():``` qui si utilizza soltanto il rcu_read_lock(), ovvero il contatore atomico utilizzato dai lettori per determinare il grace period. Anche se viene denominato 'lock', non porta a un accesso esclusivo alle risorse, tant'è vero che, concorrentemente a un lettore, possono accedere alla RCU list e al dispositivo sia altri lettori che gli scrittori.
