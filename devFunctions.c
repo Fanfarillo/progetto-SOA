@@ -108,7 +108,24 @@ asmlinkage int sys_put_data(char *source, size_t size)
     printk("%s: [put_data] mutex_lock correttamente acquisito\n", MOD_NAME);
     #endif
 
-    //sincronizzazione RCU per una lettura preliminare che recupera il superblocco e individua un eventuale blocco libero; è sufficiente scandire la RCU list senza leggere dati dal device.
+    sb_disk = get_superblock_info(global_sb);
+    if (sb_disk == NULL) {
+        printk("%s: impossibile eseguire la system call put_data(): si è verificato un errore col recupero dei dati del superblocco\n", MOD_NAME);
+        kfree(kernel_lvl_src);
+        kfree(new_node);
+        mutex_unlock(&(au_info.write_mutex));
+        #ifdef DEBUG
+        if (mutex_is_locked(&(au_info.write_mutex))) {
+            printk("%s: [put_data] c'è un problema con mutex_unlock()\n", MOD_NAME);
+        } else {
+            printk("%s: [put_data] mutex_lock correttamente rilasciato\n", MOD_NAME);
+        }
+        #endif
+        atomic_fetch_add(-1, &(au_info.usages));
+        return -EIO; //-EIO = errore di input/output
+    }
+
+    //sincronizzazione RCU per individuare un eventuale blocco libero; è sufficiente scandire la RCU list senza leggere dati dal device.
     #ifdef DEBUG
     printk("%s: [put_data] acquisizione del rcu_read_lock in corso...\n", MOD_NAME);
     #endif
@@ -116,24 +133,6 @@ asmlinkage int sys_put_data(char *source, size_t size)
     #ifdef DEBUG
     printk("%s: [put_data] rcu_read_lock correttamente acquisito\n", MOD_NAME);
     #endif
-
-    sb_disk = get_superblock_info(global_sb);
-    if (sb_disk == NULL) {
-        printk("%s: impossibile eseguire la system call put_data(): si è verificato un errore col recupero dei dati del superblocco\n", MOD_NAME);
-        kfree(kernel_lvl_src);
-        kfree(new_node);
-        rcu_read_unlock();
-        mutex_unlock(&(au_info.write_mutex));
-        #ifdef DEBUG
-        if (mutex_is_locked(&(au_info.write_mutex))) {
-            printk("%s: [put_data] c'è un problema con mutex_unlock()\n", MOD_NAME);
-        } else {
-            printk("%s: [put_data] mutex_lock e rcu_read_lock correttamente rilasciati\n", MOD_NAME);
-        }
-        #endif
-        atomic_fetch_add(-1, &(au_info.usages));
-        return -EIO; //-EIO = errore di input/output
-    }
 
     index = 0;
     curr_node = NULL;
@@ -266,7 +265,19 @@ asmlinkage int sys_get_data(int offset, char *destination, size_t size)
         size = DEFAULT_BLOCK_SIZE-METADATA_SIZE;    //in tal modo si leggono esclusivamente i dati posti nel blocco
     }
 
-    //sincronizzazione RCU per recuperare il superblocco e per effettuare l'operazione di lettura del blocco dati di posizione offset
+    sb_disk = get_superblock_info(global_sb);
+    if (sb_disk == NULL) {
+        printk("%s: impossibile eseguire la system call get_data(): si è verificato un errore col recupero dei dati del superblocco\n", MOD_NAME);
+        atomic_fetch_add(-1, &(au_info.usages));
+        return -EIO; //-EIO = errore di input/output
+    }
+    if (offset < 0 || offset >= sb_disk->user_sb.total_data_blocks) {    //stiamo assumendo offset che vanno da 0 a NBLOCKS-1
+        printk("%s: impossibile eseguire la system call get_data(): il blocco specificato (%d) non esiste\n", MOD_NAME, offset);
+        atomic_fetch_add(-1, &(au_info.usages));
+        return -EINVAL; //-EINVAL = parametri non validi (in questo caso int offset)
+    }
+
+    //sincronizzazione RCU per effettuare l'operazione di lettura del blocco dati di posizione offset
     #ifdef DEBUG
     printk("%s: [get_data] acquisizione del rcu_read_lock in corso...\n", MOD_NAME);
     #endif
@@ -274,26 +285,6 @@ asmlinkage int sys_get_data(int offset, char *destination, size_t size)
     #ifdef DEBUG
     printk("%s: [get_data] rcu_read_lock correttamente acquisito\n", MOD_NAME);
     #endif
-
-    sb_disk = get_superblock_info(global_sb);
-    if (sb_disk == NULL) {
-        printk("%s: impossibile eseguire la system call get_data(): si è verificato un errore col recupero dei dati del superblocco\n", MOD_NAME);
-        rcu_read_unlock();
-        #ifdef DEBUG
-        printk("%s: [get_data] rcu_read_lock correttamente rilasciato\n", MOD_NAME);
-        #endif
-        atomic_fetch_add(-1, &(au_info.usages));
-        return -EIO; //-EIO = errore di input/output
-    }
-    if (offset < 0 || offset >= sb_disk->user_sb.total_data_blocks) {    //stiamo assumendo offset che vanno da 0 a NBLOCKS-1
-        printk("%s: impossibile eseguire la system call get_data(): il blocco specificato (%d) non esiste\n", MOD_NAME, offset);
-        rcu_read_unlock();
-        #ifdef DEBUG
-        printk("%s: [get_data] rcu_read_lock correttamente rilasciato\n", MOD_NAME);
-        #endif
-        atomic_fetch_add(-1, &(au_info.usages));
-        return -EINVAL; //-EINVAL = parametri non validi (in questo caso int offset)
-    }
 
     index = 0;
     curr_node = NULL;
@@ -321,14 +312,15 @@ asmlinkage int sys_get_data(int offset, char *destination, size_t size)
         return -ENODATA; //-ENODATA = nessun dato disponibile
     }
 
+    rcu_read_unlock();
+    #ifdef DEBUG
+    printk("%s: [get_data] rcu_read_lock correttamente rilasciato\n", MOD_NAME);
+    #endif
+
     //recupero del contenuto del blocco da leggere
     db_cont = get_block_content(global_sb, offset+2);   //il +2 è dato dal fatto che bisogna contare anche superblocco e inode del file.
     if (db_cont == NULL) {
         printk("%s: impossibile eseguire la system call get_data(): si è verificato un errore col recupero dei dati del blocco %d\n", MOD_NAME, offset);
-        rcu_read_unlock();
-        #ifdef DEBUG
-        printk("%s: [get_data] rcu_read_lock correttamente rilasciato\n", MOD_NAME);
-        #endif
         atomic_fetch_add(-1, &(au_info.usages));
         return -EIO; //-EIO = errore di input/output
     }
@@ -337,10 +329,6 @@ asmlinkage int sys_get_data(int offset, char *destination, size_t size)
     readable_bytes = (int)strnlen(&(db_cont->payload[0]), size);
     if (readable_bytes == 0) {
         printk("%s: la system call get_data() è stata eseguita con successo ma non ci sono dati da leggere\n", MOD_NAME);
-        rcu_read_unlock();
-        #ifdef DEBUG
-        printk("%s: [get_data] rcu_read_lock correttamente rilasciato\n", MOD_NAME);
-        #endif
         atomic_fetch_add(-1, &(au_info.usages));
         return 0;
     }
@@ -349,11 +337,6 @@ asmlinkage int sys_get_data(int offset, char *destination, size_t size)
 
     //consegna dei dati all'utente
     lost_bytes_copy_to_user = copy_to_user(destination, &(db_cont->payload[0]), readable_bytes);
-
-    rcu_read_unlock();
-    #ifdef DEBUG
-    printk("%s: [get_data] rcu_read_lock correttamente rilasciato\n", MOD_NAME);
-    #endif
 
     printk("%s: la system call get_data() è stata eseguita con successo\n", MOD_NAME);
     atomic_fetch_add(-1, &(au_info.usages));
@@ -406,26 +389,16 @@ asmlinkage int sys_invalidate_data(int offset)
     printk("%s: [invalidate_data] mutex_lock correttamente acquisito\n", MOD_NAME);
     #endif
 
-    //sincronizzazione RCU per recuperare il superblocco e per effettuare il retrieve del blocco dati di posizione offset
-    #ifdef DEBUG
-    printk("%s: [invalidate_data] acquisizione del rcu_read_lock in corso...\n", MOD_NAME);
-    #endif
-    rcu_read_lock();
-    #ifdef DEBUG
-    printk("%s: [invalidate_data] rcu_read_lock correttamente acquisito\n", MOD_NAME);
-    #endif
-
     sb_disk = get_superblock_info(global_sb);
     if (sb_disk == NULL) {
         printk("%s: impossibile eseguire la system call invalidate_data(): si è verificato un errore col recupero dei dati del superblocco\n", MOD_NAME);
         kfree(new_node);
-        rcu_read_unlock();
         mutex_unlock(&(au_info.write_mutex));
         #ifdef DEBUG
         if (mutex_is_locked(&(au_info.write_mutex))) {
             printk("%s: [invalidate_data] c'è un problema con mutex_unlock()\n", MOD_NAME);
         } else {
-            printk("%s: [invalidate_data] mutex_lock e rcu_read_lock correttamente rilasciati\n", MOD_NAME);
+            printk("%s: [invalidate_data] mutex_lock correttamente rilasciato\n", MOD_NAME);
         }
         #endif
         atomic_fetch_add(-1, &(au_info.usages));
@@ -434,18 +407,26 @@ asmlinkage int sys_invalidate_data(int offset)
     if (offset < 0 || offset >= sb_disk->user_sb.total_data_blocks) {    //stiamo assumendo offset che vanno da 0 a NBLOCKS-1
         printk("%s: impossibile eseguire la system call invalidate_data(): il blocco specificato (%d) non esiste\n", MOD_NAME, offset);
         kfree(new_node);
-        rcu_read_unlock();
         mutex_unlock(&(au_info.write_mutex));
         #ifdef DEBUG
         if (mutex_is_locked(&(au_info.write_mutex))) {
             printk("%s: [invalidate_data] c'è un problema con mutex_unlock()\n", MOD_NAME);
         } else {
-            printk("%s: [invalidate_data] mutex_lock e rcu_read_lock correttamente rilasciati\n", MOD_NAME);
+            printk("%s: [invalidate_data] mutex_lock correttamente rilasciato\n", MOD_NAME);
         }
         #endif
         atomic_fetch_add(-1, &(au_info.usages));
         return -EINVAL; //-EINVAL = parametri non validi (in questo caso int offset)
     }
+
+    //sincronizzazione RCU per effettuare il retrieve del blocco dati di posizione offset
+    #ifdef DEBUG
+    printk("%s: [invalidate_data] acquisizione del rcu_read_lock in corso...\n", MOD_NAME);
+    #endif
+    rcu_read_lock();
+    #ifdef DEBUG
+    printk("%s: [invalidate_data] rcu_read_lock correttamente acquisito\n", MOD_NAME);
+    #endif
 
     index = 0;
     curr_node = NULL;
@@ -588,6 +569,21 @@ static ssize_t dev_read(struct file *filp, char *buf, size_t len, loff_t *off) {
         #endif
 
         //recupero il superblocco perché mi serve per ottenere la RCU list.
+        sb_disk = get_superblock_info(global_sb);
+        if (sb_disk == NULL) {
+            printk("%s: impossibile leggere il dispositivo: si è verificato un errore col recupero dei dati del superblocco\n", MOD_NAME);
+            mutex_unlock(&(au_info.off_mutex));
+            #ifdef DEBUG
+            if (mutex_is_locked(&(au_info.off_mutex))) {
+                printk("%s: [dev_read] c'è un problema con mutex_unlock()\n", MOD_NAME);
+            } else {
+                printk("%s: [dev_read] mutex_lock correttamente rilasciato\n", MOD_NAME);
+            }
+            #endif
+            atomic_fetch_add(-1, &(au_info.usages));
+            return -EIO; //-EIO = errore di input/output
+        }
+
         #ifdef DEBUG
         printk("%s: [dev_read] acquisizione del rcu_read_lock in corso...\n", MOD_NAME);
         #endif
@@ -595,22 +591,6 @@ static ssize_t dev_read(struct file *filp, char *buf, size_t len, loff_t *off) {
         #ifdef DEBUG
         printk("%s: [dev_read] rcu_read_lock correttamente acquisito\n", MOD_NAME);
         #endif
-
-        sb_disk = get_superblock_info(global_sb);
-        if (sb_disk == NULL) {
-            printk("%s: impossibile leggere il dispositivo: si è verificato un errore col recupero dei dati del superblocco\n", MOD_NAME);
-            rcu_read_unlock();
-            mutex_unlock(&(au_info.off_mutex));
-            #ifdef DEBUG
-            if (mutex_is_locked(&(au_info.off_mutex))) {
-                printk("%s: [dev_read] c'è un problema con mutex_unlock()\n", MOD_NAME);
-            } else {
-                printk("%s: [dev_read] mutex_lock e rcu_read_lock correttamente rilasciati\n", MOD_NAME);
-            }
-            #endif
-            atomic_fetch_add(-1, &(au_info.usages));
-            return -EIO; //-EIO = errore di input/output
-        }
 
         //all'interno di un ciclo costruisco una lista collegata che mantiene gli offset dei soli blocchi validi in ordine di 'write_counter'.
         index = 0;
@@ -647,6 +627,11 @@ static ssize_t dev_read(struct file *filp, char *buf, size_t len, loff_t *off) {
 
         }
 
+        rcu_read_unlock();
+        #ifdef DEBUG
+        printk("%s: [get_data] rcu_read_lock correttamente rilasciato\n", MOD_NAME);
+        #endif
+        
         *off = (loff_t)file_size;   //segnalo il fatto che la sorted list è stata già messa in piedi per la lettura corrente.
 
     }
@@ -658,13 +643,12 @@ static ssize_t dev_read(struct file *filp, char *buf, size_t len, loff_t *off) {
         if (len == 0) {
             printk("%s: len == 0: nothing to do\n", MOD_NAME);
             delete_all_sorted_nodes(&first_sorted_node);      //kfree() di tutti gli eventuali sorted node rimasti
-            rcu_read_unlock();
             mutex_unlock(&(au_info.off_mutex));
             #ifdef DEBUG
             if (mutex_is_locked(&(au_info.off_mutex))) {
                 printk("%s: [dev_read] c'è un problema con mutex_unlock()\n", MOD_NAME);
             } else {
-                printk("%s: [dev_read] mutex_lock e rcu_read_lock correttamente rilasciati\n", MOD_NAME);
+                printk("%s: [dev_read] mutex_lock correttamente rilasciato\n", MOD_NAME);
             }
             #endif
             atomic_fetch_add(-1, &(au_info.usages));
@@ -680,13 +664,12 @@ static ssize_t dev_read(struct file *filp, char *buf, size_t len, loff_t *off) {
         bh = (struct buffer_head *)sb_bread(filp->f_path.dentry->d_inode->i_sb, block_to_read);
         if(!bh){
             printk("%s: impossibile leggere il dispositivo: si è verificato un errore con la lettura del blocco %d\n", MOD_NAME, block_to_read);
-            rcu_read_unlock();
             mutex_unlock(&(au_info.off_mutex));
             #ifdef DEBUG
             if (mutex_is_locked(&(au_info.off_mutex))) {
                 printk("%s: [dev_read] c'è un problema con mutex_unlock()\n", MOD_NAME);
             } else {
-                printk("%s: [dev_read] mutex_lock e rcu_read_lock correttamente rilasciati\n", MOD_NAME);
+                printk("%s: [dev_read] mutex_lock correttamente rilasciato\n", MOD_NAME);
             }
             #endif
             atomic_fetch_add(-1, &(au_info.usages));
@@ -712,13 +695,12 @@ static ssize_t dev_read(struct file *filp, char *buf, size_t len, loff_t *off) {
     }
     else {  //caso in cui la lettura è stata completata
         printk("%s: read operation completed\n", MOD_NAME); 
-        rcu_read_unlock();
         mutex_unlock(&(au_info.off_mutex));
         #ifdef DEBUG
         if (mutex_is_locked(&(au_info.off_mutex))) {
             printk("%s: [dev_read] c'è un problema con mutex_unlock()\n", MOD_NAME);
         } else {
-            printk("%s: [dev_read] mutex_lock e rcu_read_lock correttamente rilasciati\n", MOD_NAME);
+            printk("%s: [dev_read] mutex_lock correttamente rilasciato\n", MOD_NAME);
         }
         #endif
         atomic_fetch_add(-1, &(au_info.usages));
