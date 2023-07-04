@@ -1,10 +1,16 @@
 #ifndef _ONEFILEFSKER_H
 #define _ONEFILEFSKER_H
 
-#include <linux/atomic.h>
 #include <linux/list.h>
 #include <linux/mutex.h>
 #include <linux/types.h>
+#include <linux/version.h>
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,15,0)
+#include <linux/atomic.h>
+#else
+#include <asm/atomic_32.h>
+#endif
 
 #include "singlefilefs.h"
 

@@ -6,7 +6,6 @@
  * un deadlock.
  */
 
-#include <linux/atomic.h>
 #include <linux/fs.h>
 #include <linux/init.h>
 #include <linux/kernel.h>
@@ -18,6 +17,12 @@
 #include <linux/syscalls.h>
 #include <linux/types.h>
 #include <linux/version.h>
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,15,0)
+#include <linux/atomic.h>
+#else
+#include <asm/atomic_32.h>
+#endif
 
 #include "filesystem/singlefilefs.h"
 #include "filesystem/singlefilefs_init.h"
@@ -548,6 +553,8 @@ static ssize_t dev_read(struct file *filp, char *buf, size_t len, loff_t *off) {
     int index;  //tiene traccia dell'indice di ciascun nodo della RCU list.
     struct rcu_node *curr_rcu_node;
     struct sorted_node *prev_sorted_node;
+    char *read_data;
+    size_t num_read_bytes;
 
     //incremento del contatore atomico degli utilizzi del file system
     atomic_fetch_add(1, &(au_info.usages));
@@ -686,8 +693,10 @@ static ssize_t dev_read(struct file *filp, char *buf, size_t len, loff_t *off) {
 	        return -EIO;
         }
 
+        read_data = bh->b_data + offset;
+        num_read_bytes = strnlen(read_data, len);
         //ora si copiano i dati dal buffer del kernel (bh->b_data+offset) al buffer dell'applicazione (buf), passato come parametro a onefilefs_read().
-        ret = copy_to_user(buf, bh->b_data + offset, len);
+        ret = copy_to_user(buf, read_data, num_read_bytes);
         brelse(bh);
 
         prev_sorted_node = first_sorted_node;
@@ -698,7 +707,7 @@ static ssize_t dev_read(struct file *filp, char *buf, size_t len, loff_t *off) {
 
         printk("%s: block %d successfully read\n", MOD_NAME, block_to_read);
         atomic_fetch_add(-1, &(au_info.usages));       
-        return len-ret;
+        return num_read_bytes-ret;
 
     }
     else {  //caso in cui la lettura è stata completata

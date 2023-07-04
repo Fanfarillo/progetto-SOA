@@ -2,7 +2,7 @@ obj-m += singlefilefs.o
 singlefilefs-objs += initAndExit.o filesystem/file.o filesystem/dir.o lib/scth.o
 
 A = $(shell cat /sys/module/the_usctm/parameters/sys_call_table_address)
-override DATA_BLOCKS = 100000
+override DATA_BLOCKS = 10000
 TOT_BLOCKS = $(shell expr $(DATA_BLOCKS) + 2)
 override MOUNT_DIR = ./mount/
 
