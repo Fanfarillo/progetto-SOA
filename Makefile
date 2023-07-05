@@ -8,13 +8,14 @@ override MOUNT_DIR = ./mount/
 
 all:
 	gcc filesystem/singlefilemakefs.c -o filesystem/singlefilemakefs
-#	make -C /lib/modules/$(shell uname -r)/build M=$(PWD) modules
+#	gcc filesystem/singlefilemakefs.c -o filesystem/singlefilemakefs -fsanitize=address -static-libasan -g
 	make -C /lib/modules/$(shell uname -r)/build M=$(shell pwd) modules
 	gcc user/user.c -o user/user.o
-	gcc test/test.c -o test/test.o -lpthread
+#	gcc user/user.c -o user/user.o -fsanitize=address -static-libasan -g
+	gcc test/test.c -o test/test.o
+#	gcc test/test.c -o test/test.o -lpthread -fsanitize=address -static-libasan -g
 
 clean:
-#	make -C /lib/modules/$(shell uname -r)/build M=$(PWD) clean
 	make -C /lib/modules/$(shell uname -r)/build M=$(shell pwd) clean
 	rm ./filesystem/singlefilemakefs
 
