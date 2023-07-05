@@ -27,21 +27,14 @@ void *launch_cat(void *);
 void *invoke_put_data(void *arg) {
 
     pthread_t tid;
-    char *source;   //primo parametro della syscall put_data()
-    size_t size;    //secondo parametro della syscall put_data()
+    char source[SIZE_SOURCE_STR];   //primo parametro della syscall put_data()
+    size_t size;                    //secondo parametro della syscall put_data()
     int ret;
     unsigned long timestamp;
 
     tid = *(pthread_t *)arg;
     printf("[THREAD %ld] Eccomi qua, all'interno della funzione invoke_put_data().\n", tid);
     fflush(stdout);
-
-    source = malloc(SIZE_SOURCE_STR);
-    if (!source) {
-        printf("[ERRORE] Problema di allocazione della memoria.\n");
-        fflush(stdout);
-        exit(-1); 
-    }
 
     sprintf(source, "Scrittura da parte del thread %ld\n", tid);
     size = strlen(source);
@@ -53,7 +46,7 @@ void *invoke_put_data(void *arg) {
     fflush(stdout);
 
     while(1) {
-        ret = syscall(PUT_SYSCALL, source, size);
+        ret = syscall(PUT_SYSCALL, (char *)source, size);
         if (!(ret < 0 && errno == EBUSY))   //caso in cui non ci sono stati problemi di concorrenza
             break;
 
@@ -72,17 +65,14 @@ void *invoke_put_data(void *arg) {
         fflush(stdout);
     }
 
-    //cleanup
-    free(source);
-
 }
 
 void *invoke_get_data(void *arg) {
 
     pthread_t tid;
-    int offset;         //primo parametro della syscall get_data()
-    char *destination;  //secondo parametro della syscall get_data()
-    size_t size;        //terzo parametro della syscall get_data()
+    int offset;                             //primo parametro della syscall get_data()
+    char destination[DEFAULT_BLOCK_SIZE];   //secondo parametro della syscall get_data()
+    size_t size;                            //terzo parametro della syscall get_data()
     int ret;
     unsigned long timestamp;
 
@@ -91,13 +81,6 @@ void *invoke_get_data(void *arg) {
     fflush(stdout);
 
     size = (size_t)DEFAULT_BLOCK_SIZE-METADATA_SIZE;
-    destination = malloc(size);
-    if (!destination) {
-        printf("[ERRORE] Problema di allocazione della memoria.\n");
-        fflush(stdout);
-        exit(-1); 
-    }
-
     offset = (int)(tid % TEST_BLOCKS);    //il blocco da leggere viene scelto in base al thread ID.
 
     pthread_barrier_wait(&barrier); //attendo che tutti gli altri thread child raggiungano la barriera.
@@ -106,7 +89,7 @@ void *invoke_get_data(void *arg) {
     printf("\n[THREAD %ld] Sto per invocare get_data(). Timestamp = %lu.\n", tid, timestamp);
     fflush(stdout);
 
-    ret = syscall(GET_SYSCALL, offset, destination, size);
+    ret = syscall(GET_SYSCALL, offset, (char *)destination, size);
 
     RDTSC(timestamp);
     printf("\n[THREAD %ld] Ho terminato l'esecuzione di get_data() sul blocco %d. Timestamp = %lu.\n", tid, offset, timestamp);
@@ -120,9 +103,6 @@ void *invoke_get_data(void *arg) {
         printf("\n[THREAD %ld] L'esecuzione di get_data() è andata a buon fine. READ DATA: %s\n", tid, destination);
         fflush(stdout);
     }
-
-    //cleanup
-    free(destination);
     
 }
 
@@ -173,18 +153,11 @@ void *launch_cat(void *arg) {
     pthread_t tid;
     int ret;
     unsigned long timestamp;
-    char *command;
+    char command[SIZE_COMMAND_STR];
 
     tid = *(pthread_t *)arg;
     printf("[THREAD %ld] Eccomi qua, all'interno della funzione launch_cat().\n", tid);
     fflush(stdout);
-
-    command = malloc(SIZE_COMMAND_STR);
-    if (!command) {
-        printf("[ERRORE] Problema di allocazione della memoria.\n");
-        fflush(stdout);
-        exit(-1); 
-    }
 
     sprintf(command, "cat ../mount/the-file");
 
@@ -209,9 +182,6 @@ void *launch_cat(void *arg) {
         fflush(stdout);
     }
 
-    //cleaup
-    free(command);
-    
 }
 
 int main(int argc, char **argv) {

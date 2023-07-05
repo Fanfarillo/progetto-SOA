@@ -98,7 +98,9 @@ asmlinkage int sys_put_data(char *source, size_t size)
     #endif
     ret = mutex_trylock(&(au_info.write_mutex));
     if (ret == 0) {
+        #ifdef DEBUG
         printk("%s: impossibile eseguire la system call put_data(): il lock è occupato\n", MOD_NAME);
+        #endif
         kfree(kernel_lvl_src);
         kfree(new_node);
         atomic_fetch_add(-1, &(au_info.usages));
@@ -227,7 +229,7 @@ asmlinkage int sys_put_data(char *source, size_t size)
     kfree(kernel_lvl_src);
     kfree(curr_node);
 
-    printk("%s: la system call put_data() è stata eseguita con successo\n", MOD_NAME);
+    printk("%s: la system call put_data() sul blocco %d è stata eseguita con successo\n", MOD_NAME, index-2);
     atomic_fetch_add(-1, &(au_info.usages));
     return index-2;
 
@@ -328,7 +330,7 @@ asmlinkage int sys_get_data(int offset, char *destination, size_t size)
     //considero il numero di byte letti come la lunghezza della stringa letta (eventualmente fino a '\0'); in mancanza di '\0', verrà restituito ret.
     readable_bytes = (int)strnlen(&(db_cont->payload[0]), size);
     if (readable_bytes == 0) {
-        printk("%s: la system call get_data() è stata eseguita con successo ma non ci sono dati da leggere\n", MOD_NAME);
+        printk("%s: la system call get_data() sul blocco %d è stata eseguita con successo ma non ci sono dati da leggere\n", MOD_NAME, offset);
         atomic_fetch_add(-1, &(au_info.usages));
         return 0;
     }
@@ -338,7 +340,7 @@ asmlinkage int sys_get_data(int offset, char *destination, size_t size)
     //consegna dei dati all'utente
     lost_bytes_copy_to_user = copy_to_user(destination, &(db_cont->payload[0]), readable_bytes);
 
-    printk("%s: la system call get_data() è stata eseguita con successo\n", MOD_NAME);
+    printk("%s: la system call get_data() sul blocco %d è stata eseguita con successo\n", MOD_NAME, offset);
     atomic_fetch_add(-1, &(au_info.usages));
     return readable_bytes - lost_bytes_copy_to_user;
 
@@ -380,7 +382,9 @@ asmlinkage int sys_invalidate_data(int offset)
     #endif
     ret = mutex_trylock(&(au_info.write_mutex));
     if (ret == 0) {
+        #ifdef DEBUG
         printk("%s: impossibile eseguire la system call put_data(): il lock è occupato\n", MOD_NAME);
+        #endif
         kfree(new_node);
         atomic_fetch_add(-1, &(au_info.usages));
         return -EBUSY;
@@ -500,7 +504,7 @@ asmlinkage int sys_invalidate_data(int offset)
     synchronize_rcu();  //funzione che serve a far sì che lo scrittore attenda la terminazione del grace period
     kfree(curr_node);
 
-    printk("%s: la system call invalidate_data() è stata eseguita con successo\n", MOD_NAME);
+    printk("%s: la system call invalidate_data() sul blocco %d è stata eseguita con successo\n", MOD_NAME, offset);
     atomic_fetch_add(-1, &(au_info.usages));
     return 0;
 
@@ -560,7 +564,9 @@ static ssize_t dev_read(struct file *filp, char *buf, size_t len, loff_t *off) {
         #endif
         ret = mutex_trylock(&(au_info.off_mutex));
         if (ret == 0) {
+            #ifdef DEBUG
             printk("%s: impossibile leggere il dispositivo: il lock è occupato\n", MOD_NAME);
+            #endif
             atomic_fetch_add(-1, &(au_info.usages));
             return -EBUSY;
         }
@@ -658,7 +664,7 @@ static ssize_t dev_read(struct file *filp, char *buf, size_t len, loff_t *off) {
             len = DEFAULT_BLOCK_SIZE - offset;  //il numero di byte da leggere a ogni iterazione è al più pari al numero di byte di payload di un singolo blocco.
         
         block_to_read = first_sorted_node->node_index;
-        printk("%s: read operation must access block %d of the device", MOD_NAME, block_to_read);
+        printk("%s: read operation must access block %d of the device", MOD_NAME, block_to_read-2);
 
         //sb_read acquisisce il contenuto del blocco da leggere (quello di cui abbiamo appena calcolato l'indice).
         bh = (struct buffer_head *)sb_bread(filp->f_path.dentry->d_inode->i_sb, block_to_read);
@@ -688,7 +694,7 @@ static ssize_t dev_read(struct file *filp, char *buf, size_t len, loff_t *off) {
         //kfree() del nodo appena attraversato poiché non serve più
         kfree(prev_sorted_node);
 
-        printk("%s: block %d successfully read\n", MOD_NAME, block_to_read);
+        printk("%s: block %d successfully read\n", MOD_NAME, block_to_read-2);
         atomic_fetch_add(-1, &(au_info.usages));       
         return num_read_bytes-ret;
 
