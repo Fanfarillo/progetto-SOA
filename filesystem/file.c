@@ -43,7 +43,9 @@ struct dentry *onefilefs_lookup(struct inode *parent_inode, struct dentry *child
 
 	    //this work is done if the inode was not already cached
         //in pratica qui viene definito l'inode impostando i permessi d'accesso, le file operation e le inode operation.
-        #if LINUX_VERSION_CODE >= KERNEL_VERSION(5,12,0)
+        #if LINUX_VERSION_CODE >= KERNEL_VERSION(6,3,0)
+            inode_init_owner(&nop_mnt_idmap, the_inode, NULL, S_IFREG);
+        #elif LINUX_VERSION_CODE >= KERNEL_VERSION(5,12,0)
             inode_init_owner(&init_user_ns, the_inode, NULL, S_IFREG);
         #else
             inode_init_owner(the_inode, NULL, S_IFREG);

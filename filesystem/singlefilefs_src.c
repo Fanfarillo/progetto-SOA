@@ -157,7 +157,9 @@ int singlefilefs_fill_super(struct super_block *sb, void *data, int silent) {
      * i_atime: timestamp
      */
     root_inode->i_ino = SINGLEFILEFS_ROOT_INODE_NUMBER;//this is actually 10
-    #if LINUX_VERSION_CODE >= KERNEL_VERSION(5,12,0)
+    #if LINUX_VERSION_CODE >= KERNEL_VERSION(6,3,0)
+        inode_init_owner(&nop_mnt_idmap, root_inode, NULL, S_IFDIR);
+    #elif LINUX_VERSION_CODE >= KERNEL_VERSION(5,12,0)
         inode_init_owner(&init_user_ns, root_inode, NULL, S_IFDIR); //set the root user as owned of the FS root
     #else
         inode_init_owner(root_inode, NULL, S_IFDIR);

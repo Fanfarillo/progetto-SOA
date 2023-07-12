@@ -12,7 +12,7 @@ all:
 	make -C /lib/modules/$(shell uname -r)/build M=$(shell pwd) modules
 	gcc user/user.c -o user/user.o
 #	gcc user/user.c -o user/user.o -fsanitize=address -static-libasan -g
-	gcc test/test.c -o test/test.o
+	gcc test/test.c -o test/test.o -lpthread
 #	gcc test/test.c -o test/test.o -lpthread -fsanitize=address -static-libasan -g
 
 clean:
