@@ -153,13 +153,10 @@ void *launch_cat(void *arg) {
     pthread_t tid;
     int ret;
     unsigned long timestamp;
-    char command[SIZE_COMMAND_STR];
 
     tid = *(pthread_t *)arg;
     printf("[THREAD %ld] Eccomi qua, all'interno della funzione launch_cat().\n", tid);
     fflush(stdout);
-
-    sprintf(command, "cat ../mount/the-file");
 
     pthread_barrier_wait(&barrier); //attendo che tutti gli altri thread child raggiungano la barriera.
 
@@ -167,7 +164,7 @@ void *launch_cat(void *arg) {
     printf("\n[THREAD %ld] Sto per lanciare il comando cat. Timestamp = %lu.\n", tid, timestamp);
     fflush(stdout);
 
-    ret = system(command);  //esecuzione del comando cat
+    ret = system("cat ../mount/the-file");  //esecuzione del comando cat
 
     RDTSC(timestamp);
     printf("\n[THREAD %ld] Ho terminato l'esecuzione del comando cat. Timestamp = %lu.\n", tid, timestamp);

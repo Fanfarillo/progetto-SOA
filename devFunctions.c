@@ -1,9 +1,14 @@
-/* DISCLAIMER: per l'acquisizione dei mutex write_mutex e off_mutex si è scelto di utilizzare la funzione mutex_trylock()
+/* DISCLAIMER 1: per l'acquisizione dei mutex write_mutex e off_mutex si è scelto di utilizzare la funzione mutex_trylock()
  * anziché la funzione mutex_lock() (e quindi di gestire le retry dell'acquisizione del lock a livello user) poiché ho
  * avuto problemi con l'esecuzione concorrente nel caso in cui si utilizza mutex_lock(): in particolare, se due thread
  * provano ad acquisire uno stesso lock concorrentemente, solo un thread riesce ad acquisirlo mentre l'altro resta in
  * attesa (il che è corretto). Tuttavia, quando il primo thread rilascia il lock, l'altro thread resta in attesa, causando
  * un deadlock.
+ *
+ * DISCLAIMER 2: ci sono operazioni come put_data() e invalidate_data() che modificano i metadati di più blocchi. Nel caso
+ * in cui si verifica un errore di I/O nell'accesso a uno di questi blocchi, non si effettua il roll-back delle scritture
+ * poiché si è assunto che l'errore di I/O sia sintomo di dispositivo danneggiato / inutilizzabile. Perciò, in tal caso,
+ * riportare il device a uno stato consistente sarebbe inutile (se non infattibile).
  */
 
 #include <linux/fs.h>
@@ -27,7 +32,8 @@
 #include "devFunctions.h"
 #include "utils.c"
 
-int is_first_call;  //variabile globale che indica se il chiamante di dev_read() si trova alla prima iterazione o meno
+int is_first_call = YES;    //variabile globale che indica se il chiamante di dev_read() si trova alla prima iterazione o meno
+int is_last_call = NO;      //variabile globale che indica se il chiamante di dev_read() si trova all'ultima iterazione o meno
 
 //SYSTEM CALLS
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4,17,0)
@@ -273,7 +279,7 @@ asmlinkage int sys_invalidate_data(int offset)
         return -ENODEV; //-ENODEV = file system non esistente
     }
 
-    //utilizzo di mutex per sincronizzare le scritture tra loro (di fatto anche l'invalidazione risulta essere una scrittura nella RCU list)
+    //utilizzo di mutex per sincronizzare le scritture tra loro (di fatto anche l'invalidazione risulta essere una scrittura nel device)
     ret = mutex_trylock(&(au_info.write_mutex));
     if (ret == 0) {
         atomic_fetch_add(-1, &(au_info.usages));
@@ -312,10 +318,12 @@ asmlinkage int sys_invalidate_data(int offset)
     if (!(db_meta->is_valid)) {
         printk("%s: impossibile eseguire la system call invalidate_data(): il blocco specificato (%d) è già invalido\n", MOD_NAME, offset);
         mutex_unlock(&(au_info.write_mutex));
-        printk("%s: [invalidate_data] mutex_lock e rcu_read_lock correttamente rilasciati\n", MOD_NAME);
+        printk("%s: [invalidate_data] mutex_lock correttamente rilasciato\n", MOD_NAME);
         atomic_fetch_add(-1, &(au_info.usages));
         return -ENODATA; //-ENODATA = nessun dato disponibile
     }
+
+    //TODO: qui va l'attesa della fine del grace period.
 
     //caso in cui il blocco target era l'unico blocco valido
     if (offset == sb_disk->first_valid && offset == sb_disk->last_valid) {
@@ -342,16 +350,41 @@ asmlinkage int sys_invalidate_data(int offset)
         next_to_set = YES;
     }
 
+    //se serve, si aggiornano il superblocco e/o i metadati dei blocchi prev/next del blocco target.
     if (superblock_to_set == YES) {
+        ret = set_superblock_info(global_sb, new_first_valid, new_last_valid);
+        if (ret < 0) {
+            printk("%s: impossibile eseguire la system call invalidate_data(): si è verificato un errore con l'invalidazione dei dati sul blocco %d\n", MOD_NAME, offset);
+            mutex_unlock(&(au_info.write_mutex));
+            printk("%s: [invalidate_data] mutex_lock correttamente rilasciato\n", MOD_NAME);
+            atomic_fetch_add(-1, &(au_info.usages));
+            return -EIO; //-EIO = errore di input/output        
+        }
 
     }
 
     if (prev_to_set == YES) {
+        ret = set_block_metadata(global_sb, (db_meta->prev_valid)+2, db_meta->next_valid, YES);
+        if (ret < 0) {
+            printk("%s: impossibile eseguire la system call invalidate_data(): si è verificato un errore con l'invalidazione dei dati sul blocco %d\n", MOD_NAME, offset);
+            mutex_unlock(&(au_info.write_mutex));
+            printk("%s: [invalidate_data] mutex_lock correttamente rilasciato\n", MOD_NAME);
+            atomic_fetch_add(-1, &(au_info.usages));
+            return -EIO; //-EIO = errore di input/output        
+        }
 
     }
 
     if (next_to_set == YES) {
-        
+        ret = set_block_metadata(global_sb, (db_meta->next_valid)+2, db_meta->prev_valid, NO);
+        if (ret < 0) {
+            printk("%s: impossibile eseguire la system call invalidate_data(): si è verificato un errore con l'invalidazione dei dati sul blocco %d\n", MOD_NAME, offset);
+            mutex_unlock(&(au_info.write_mutex));
+            printk("%s: [invalidate_data] mutex_lock correttamente rilasciato\n", MOD_NAME);
+            atomic_fetch_add(-1, &(au_info.usages));
+            return -EIO; //-EIO = errore di input/output        
+        }
+
     }
 
     //invalidazione del blocco (interessano in particolar modo solo i metadati)
@@ -383,32 +416,25 @@ static ssize_t dev_read(struct file *, char *, size_t, loff_t *);
 static int dev_open(struct inode *, struct file *);
 static int dev_release(struct inode *, struct file *);
 
-/* La dev_read() legge i dati dal blocco del dispositivo corrispondente alla posizione indicata dall'offset off.
- * RETURN 0, cosicché poi dev_read() non venga più invocata (mi occuperò di leggere tutti i blocchi in un ciclo definito qui).
- */
+//la dev_read() legge i dati dal blocco del dispositivo corrispondente alla posizione indicata dall'offset off.
 static ssize_t dev_read(struct file *filp, char *buf, size_t len, loff_t *off) {
 
-    struct buffer_head *bh;
     struct inode *the_inode;
     uint64_t file_size;
     int ret;
-    loff_t offset;
     int block_to_read;  //index of the block to be read from device
 
     //qui iniziano le variabili definite da me
     struct onefilefs_sb_info *sb_disk;
-    int index;  //tiene traccia dell'indice di ciascun nodo della RCU list.
-    struct rcu_node *curr_rcu_node;
-    struct sorted_node *prev_sorted_node;
+    struct data_block_content *db_cont;
     char *read_data;
-    size_t num_read_bytes;
 
     //incremento del contatore atomico degli utilizzi del file system
     atomic_fetch_add(1, &(au_info.usages));
 
-    bh = NULL;
     the_inode = filp->f_inode;
     file_size = the_inode->i_size;
+    db_cont = NULL;
 
     printk("%s: read operation called with len %ld\n", MOD_NAME, len);
 
@@ -419,158 +445,93 @@ static ssize_t dev_read(struct file *filp, char *buf, size_t len, loff_t *off) {
         return -ENODEV; //-ENODEV = file system non esistente
     }
 
-    if (*off == 0) {    //caso in cui la lettura deve ancora iniziare (è qui che viene inizializzata la lista collegata dei nodi ordinati)
-        //blocco off_mutex, il quale mi serve per bloccare anche gli accessi alla sorted list
-        #ifdef DEBUG
-        printk("%s: [dev_read] acquisizione del mutex_lock in corso...\n", MOD_NAME);
-        #endif
+    if (is_first_call == YES) {    //caso in cui la lettura deve ancora iniziare
+        //blocco off_mutex, il quale mi serve per bloccare anche gli accessi a is_first_call, is_last_call e *off.
         ret = mutex_trylock(&(au_info.off_mutex));
         if (ret == 0) {
-            #ifdef DEBUG
-            printk("%s: impossibile leggere il dispositivo: il lock è occupato\n", MOD_NAME);
-            #endif
             atomic_fetch_add(-1, &(au_info.usages));
             return -EBUSY;
         }
-        #ifdef DEBUG
         printk("%s: [dev_read] mutex_lock correttamente acquisito\n", MOD_NAME);
-        #endif
 
-        //recupero il superblocco perché mi serve per ottenere la RCU list.
-        sb_disk = get_superblock_info(global_sb);
+        //TODO: qui va l'acquisizione dell'RCU read lock.
+
+        //recupero il superblocco perché mi serve per ottenere il primo blocco valido.
+        sb_disk = get_superblock_info(filp->f_path.dentry->d_inode->i_sb);
         if (sb_disk == NULL) {
             printk("%s: impossibile leggere il dispositivo: si è verificato un errore col recupero dei dati del superblocco\n", MOD_NAME);
             mutex_unlock(&(au_info.off_mutex));
-            #ifdef DEBUG
-            if (mutex_is_locked(&(au_info.off_mutex))) {
-                printk("%s: [dev_read] c'è un problema con mutex_unlock()\n", MOD_NAME);
-            } else {
-                printk("%s: [dev_read] mutex_lock correttamente rilasciato\n", MOD_NAME);
-            }
-            #endif
+            printk("%s: [dev_read] mutex_lock correttamente rilasciato\n", MOD_NAME);
             atomic_fetch_add(-1, &(au_info.usages));
             return -EIO; //-EIO = errore di input/output
         }
 
-        #ifdef DEBUG
-        printk("%s: [dev_read] acquisizione del rcu_read_lock in corso...\n", MOD_NAME);
-        #endif
-        rcu_read_lock();
-        #ifdef DEBUG
-        printk("%s: [dev_read] rcu_read_lock correttamente acquisito\n", MOD_NAME);
-        #endif
-
-        //all'interno di un ciclo costruisco una lista collegata che mantiene gli offset dei soli blocchi validi in ordine di 'write_counter'.
-        index = 0;
-        curr_rcu_node = NULL;
-        first_sorted_node = NULL;
-
-        /* Costrutto che itera su tutti i nodi della RCU list
-        *@param curr_node: struct rcu_node che, a ogni iterazione del ciclo, tiene traccia del nodo corrente della RCU list
-        *@param &(sb_disk->rcu_head): puntatore alla list head dell'elemento artificiale del superblock
-        *@param lh: campo della struct rcu_node di tipo struct list_head
-        */
-        list_for_each_entry_rcu(curr_rcu_node, &(sb_disk->rcu_head), lh) {
-
-            if (curr_rcu_node->is_valid && curr_rcu_node->write_counter > 0) {  //la condizione curr_rcu_node->write_counter > 0 esclude superblocco e inode.
-
-                ret = add_sorted_node(index, curr_rcu_node->write_counter, &first_sorted_node);    //considero il primo blocco dati a offset 2 e così via
-                if (ret < 0) {
-                    printk("%s: impossibile leggere il dispositivo: si è verificato un errore con l'allocazione della memoria\n", MOD_NAME);
-                    rcu_read_unlock();
-                    mutex_unlock(&(au_info.off_mutex));
-                    #ifdef DEBUG
-                    if (mutex_is_locked(&(au_info.off_mutex))) {
-                        printk("%s: [dev_read] c'è un problema con mutex_unlock()\n", MOD_NAME);
-                    } else {
-                        printk("%s: [dev_read] mutex_lock e rcu_read_lock correttamente rilasciati\n", MOD_NAME);
-                    }
-                    #endif
-                    atomic_fetch_add(-1, &(au_info.usages));
-                    return -EIO; //-EIO = errore di input/output            
-                }
-
-            }
-            index++;
-
+        //controllo se c'è almeno un blocco da leggere. Se non c'è, imposto a YES is_last_call.
+        if (sb_disk->first_valid != -1) {
+            *off = (loff_t)(sb_disk->first_valid * DEFAULT_BLOCK_SIZE); //ora *off indica il primo blocco da leggere.
+        }
+        else {
+            *off = (loff_t)file_size;
+            is_last_call = YES;
         }
 
-        rcu_read_unlock();
-        #ifdef DEBUG
-        printk("%s: [get_data] rcu_read_lock correttamente rilasciato\n", MOD_NAME);
-        #endif
-        
-        *off = (loff_t)file_size;   //segnalo il fatto che la sorted list è stata già messa in piedi per la lettura corrente.
+        is_first_call = NO;
 
     }
 
-    if (first_sorted_node != NULL) {        //caso in cui ci sono ancora dei dati da leggere
-        prev_sorted_node = NULL;
-        offset = METADATA_SIZE; //l'offset da cui far partire ciascuna lettura di un singolo blocco deve partire dalla fine dei metadati.
-        
+    if (is_last_call == NO) {   //caso in cui ci sono ancora dei dati da leggere   
+
         if (len == 0) {
             printk("%s: len == 0: nothing to do\n", MOD_NAME);
-            delete_all_sorted_nodes(&first_sorted_node);      //kfree() di tutti gli eventuali sorted node rimasti
+            //TODO: qui va il rilascio dell'RCU read lock.
+            is_first_call = YES;
             mutex_unlock(&(au_info.off_mutex));
-            #ifdef DEBUG
-            if (mutex_is_locked(&(au_info.off_mutex))) {
-                printk("%s: [dev_read] c'è un problema con mutex_unlock()\n", MOD_NAME);
-            } else {
-                printk("%s: [dev_read] mutex_lock correttamente rilasciato\n", MOD_NAME);
-            }
-            #endif
+            printk("%s: [dev_read] mutex_lock correttamente rilasciato\n", MOD_NAME);
             atomic_fetch_add(-1, &(au_info.usages));
             return 0;
         }
-        else if (len + offset > DEFAULT_BLOCK_SIZE)           
-            len = DEFAULT_BLOCK_SIZE - offset;  //il numero di byte da leggere a ogni iterazione è al più pari al numero di byte di payload di un singolo blocco.
+        else if (len + METADATA_SIZE > DEFAULT_BLOCK_SIZE)           
+            len = DEFAULT_BLOCK_SIZE - METADATA_SIZE;  //il numero di byte da leggere a ogni iterazione è al più pari al numero di byte di payload di un singolo blocco.
         
-        block_to_read = first_sorted_node->node_index;
+        block_to_read = (*off / DEFAULT_BLOCK_SIZE) + 2; //the value 2 accounts for superblock and file-inode on device.
         printk("%s: read operation must access block %d of the device", MOD_NAME, block_to_read-2);
 
-        //sb_read acquisisce il contenuto del blocco da leggere (quello di cui abbiamo appena calcolato l'indice).
-        bh = (struct buffer_head *)sb_bread(filp->f_path.dentry->d_inode->i_sb, block_to_read);
-        if(!bh){
+        //acquisizione del contenuto del blocco da leggere (quello di cui abbiamo appena calcolato l'indice).
+        db_cont = get_block_content(filp->f_path.dentry->d_inode->i_sb, block_to_read);
+        if(!db_cont){
             printk("%s: impossibile leggere il dispositivo: si è verificato un errore con la lettura del blocco %d\n", MOD_NAME, block_to_read);
+            is_first_call = YES;
             mutex_unlock(&(au_info.off_mutex));
-            #ifdef DEBUG
-            if (mutex_is_locked(&(au_info.off_mutex))) {
-                printk("%s: [dev_read] c'è un problema con mutex_unlock()\n", MOD_NAME);
-            } else {
-                printk("%s: [dev_read] mutex_lock correttamente rilasciato\n", MOD_NAME);
-            }
-            #endif
+            printk("%s: [dev_read] mutex_lock correttamente rilasciato\n", MOD_NAME);
             atomic_fetch_add(-1, &(au_info.usages));
 	        return -EIO;
         }
 
-        read_data = bh->b_data + offset;
-        num_read_bytes = strnlen(read_data, len);
-        //ora si copiano i dati dal buffer del kernel (bh->b_data+offset) al buffer dell'applicazione (buf), passato come parametro a onefilefs_read().
-        ret = copy_to_user(buf, read_data, num_read_bytes);
-        brelse(bh);
+        read_data = db_cont + METADATA_SIZE;    //l'offset da cui far partire ciascuna lettura di un singolo blocco deve corrispondere alla fine dei metadati.
+        //ora si copiano i dati dal buffer del kernel (db_cont+METADATA_SIZE) al buffer dell'applicazione (buf), passato come parametro a onefilefs_read().
+        ret = copy_to_user(buf, read_data, len);
 
-        prev_sorted_node = first_sorted_node;
-        first_sorted_node = first_sorted_node->next;  //prossimo blocco da leggere
-
-        //kfree() del nodo appena attraversato poiché non serve più
-        kfree(prev_sorted_node);
+        //controllo se c'è ancora un blocco successivo da leggere. Se non c'è, imposto a YES is_last_call.
+        if (db_cont->metadata.next_valid != -1) {
+            *off = (loff_t)(db_cont->metadata.next_valid * DEFAULT_BLOCK_SIZE); //ora *off indica il prossimo blocco da leggere.
+        }
+        else {
+            *off = (loff_t)file_size;
+            is_last_call = YES;
+        }
 
         printk("%s: block %d successfully read\n", MOD_NAME, block_to_read-2);
         atomic_fetch_add(-1, &(au_info.usages));       
-        return num_read_bytes-ret;
+        return len-ret;
 
     }
     else {  //caso in cui la lettura è stata completata
-        printk("%s: read operation completed\n", MOD_NAME); 
+        printk("%s: read operation completed\n", MOD_NAME);
+        //TODO: qui va il rilascio dell'RCU read lock.
+        is_first_call = YES;
+        is_last_call = NO;
         mutex_unlock(&(au_info.off_mutex));
-        #ifdef DEBUG
-        if (mutex_is_locked(&(au_info.off_mutex))) {
-            printk("%s: [dev_read] c'è un problema con mutex_unlock()\n", MOD_NAME);
-        } else {
-            printk("%s: [dev_read] mutex_lock correttamente rilasciato\n", MOD_NAME);
-        }
-        #endif
+        printk("%s: [dev_read] mutex_lock correttamente rilasciato\n", MOD_NAME);
         atomic_fetch_add(-1, &(au_info.usages));
         return 0;
 
@@ -590,7 +551,7 @@ static int dev_open(struct inode *inode, struct file *file) {
         atomic_fetch_add(-1, &(au_info.usages));
         return -ENODEV; //-ENODEV = file system non esistente
     }
-    if (file->f_mode & FMODE_WRITE) {    //il dispositivo deve essere aperto in read only
+    if (file->f_mode & FMODE_WRITE) {    //il dispositivo deve essere aperto in modalità read only
         printk("%s: impossibile aprire il dispositivo in modalità scrittura\n", MOD_NAME);
         atomic_fetch_add(-1, &(au_info.usages));
         return -EPERM;  //-EPERM = operazione non consentita
