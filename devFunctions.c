@@ -9,11 +9,8 @@
 #include <linux/fs.h>
 #include <linux/init.h>
 #include <linux/kernel.h>
-#include <linux/list.h>
 #include <linux/module.h>
 #include <linux/mutex.h>
-#include <linux/rculist.h>
-#include <linux/string.h>
 #include <linux/syscalls.h>
 #include <linux/types.h>
 #include <linux/version.h>
@@ -30,7 +27,7 @@
 #include "devFunctions.h"
 #include "utils.c"
 
-struct sorted_node *first_sorted_node;
+int is_first_call;  //variabile globale che indica se il chiamante di dev_read() si trova alla prima iterazione o meno
 
 //SYSTEM CALLS
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4,17,0)
@@ -39,15 +36,14 @@ __SYSCALL_DEFINEx(2, _put_data, char *, source, size_t, size)
 asmlinkage int sys_put_data(char *source, size_t size)
 #endif
 {
-    char *kernel_lvl_src;   //buffer di livello kernel (inizializzato con una copy_from_user()) in cui verrà posto l'input della put
-    size_t bytes_to_write;  //non è detto che size e la lunghezzaa di source corrispondano.
-    int index;  //variabile che tiene traccia del numero di iterazione all'interno del ciclo che itera sulla RCU list; index-2 sarà il valore di ritorno della system call.
+    char *kernel_lvl_src;       //buffer di livello kernel (inizializzato con una copy_from_user()) in cui verrà posto l'input della put
+    size_t bytes_to_write;      //non è detto che size e la lunghezza di source corrispondano.
+    int offset; //variabile che tiene traccia del numero di iterazione all'interno del ciclo che itera sui blocchi; sarà il valore di ritorno della system call.
     int ret;
     unsigned long ulong_ret;    //serve specificatamente per la copy_from_user().
+    int new_first_valid;        //nuovo valore che dovrà assumere first_valid nel superblocco; sarà diverso dall'originale solo se quest'ultimo è pari a -1.
     struct onefilefs_sb_info *sb_disk;
-    struct rcu_node *new_node;
-    struct rcu_node *curr_node;
-    int old_total_writes;   //valore di total_writes originariamente letto dal superblocco (se la put va a buon fine, verrà incrementato di 1)
+    struct data_block_metadata *db_meta;
 
     //incremento del contatore atomico degli utilizzi del file system
     atomic_fetch_add(1, &(au_info.usages));
@@ -69,169 +65,109 @@ asmlinkage int sys_put_data(char *source, size_t size)
         return -EINVAL; //-EINVAL = parametri non validi (in questo caso size_t size e/o char *source)
     }
 
-    //riporto in un buffer del kernel delle informazioni da scrivere su un blocco del dispositivo
-    bytes_to_write = strnlen(source, size);    //bytes_to_write determina la quantità di memoria da allocare per il kernel buffer in cui verrà posto l'input della put
-    if (bytes_to_write < size)
-        bytes_to_write++;   //strnlen() non conta l'eventuale '\0': lo aggiungo a mano.
-
-    kernel_lvl_src = kmalloc(bytes_to_write, GFP_KERNEL);
+    kernel_lvl_src = kmalloc(size, GFP_KERNEL);
     if (!kernel_lvl_src) {
         printk("%s: impossibile eseguire la system call put_data(): si è verificato un errore con l'allocazione della memoria\n", MOD_NAME);
         atomic_fetch_add(-1, &(au_info.usages));
         return -ENOMEM; //-ENOMEM = errore di esaurimento della memoria         
     }
-    ulong_ret = copy_from_user(kernel_lvl_src, source, (unsigned long)bytes_to_write);  //ulong_ret è il numero di byte NON copiati (su un massimo di bytrs_to_write).
-    bytes_to_write = bytes_to_write - (size_t)ulong_ret;    //dai bytes_to_write togliamo i residui di copy_from_user().
-
-    //creazione del nodo da inserire nella RCU list al posto di quello da modificare
-    new_node = kmalloc(sizeof(struct rcu_node), GFP_KERNEL);
-    if (!new_node) {
-        printk("%s: impossibile eseguire la system call put_data(): si è verificato un errore con l'allocazione della memoria\n", MOD_NAME);
-        kfree(kernel_lvl_src);
-        atomic_fetch_add(-1, &(au_info.usages));
-        return -ENOMEM; //-ENOMEM = errore di esaurimento della memoria 
-    }
+    ulong_ret = copy_from_user(kernel_lvl_src, source, (unsigned long)size);  //ulong_ret è il numero di byte NON copiati (su un massimo di size).
+    bytes_to_write = size - (size_t)ulong_ret;    //il numero di byte da scrivere nel blocco è pari a size meno i residui di copy_from_user().
 
     //utilizzo di mutex per sincronizzare le scritture tra loro
-    #ifdef DEBUG
-    printk("%s: [put_data] acquisizione del mutex_lock in corso...\n", MOD_NAME);
-    #endif
     ret = mutex_trylock(&(au_info.write_mutex));
     if (ret == 0) {
-        #ifdef DEBUG
-        printk("%s: impossibile eseguire la system call put_data(): il lock è occupato\n", MOD_NAME);
-        #endif
         kfree(kernel_lvl_src);
-        kfree(new_node);
         atomic_fetch_add(-1, &(au_info.usages));
         return -EBUSY;
     }
-    #ifdef DEBUG
     printk("%s: [put_data] mutex_lock correttamente acquisito\n", MOD_NAME);
-    #endif
 
+    //recupero dei dati memorizzati nel superblocco
     sb_disk = get_superblock_info(global_sb);
     if (sb_disk == NULL) {
         printk("%s: impossibile eseguire la system call put_data(): si è verificato un errore col recupero dei dati del superblocco\n", MOD_NAME);
         kfree(kernel_lvl_src);
-        kfree(new_node);
         mutex_unlock(&(au_info.write_mutex));
-        #ifdef DEBUG
-        if (mutex_is_locked(&(au_info.write_mutex))) {
-            printk("%s: [put_data] c'è un problema con mutex_unlock()\n", MOD_NAME);
-        } else {
-            printk("%s: [put_data] mutex_lock correttamente rilasciato\n", MOD_NAME);
-        }
-        #endif
+        printk("%s: [put_data] mutex_lock correttamente rilasciato\n", MOD_NAME);
         atomic_fetch_add(-1, &(au_info.usages));
         return -EIO; //-EIO = errore di input/output
     }
 
-    //sincronizzazione RCU per individuare un eventuale blocco libero; è sufficiente scandire la RCU list senza leggere dati dal device.
-    #ifdef DEBUG
-    printk("%s: [put_data] acquisizione del rcu_read_lock in corso...\n", MOD_NAME);
-    #endif
-    rcu_read_lock();
-    #ifdef DEBUG
-    printk("%s: [put_data] rcu_read_lock correttamente acquisito\n", MOD_NAME);
-    #endif
+    //iterazione sui blocchi del dispositivo per cercare un blocco libero.
+    for(offset=0; offset<sb_disk->total_data_blocks; offset++) {
 
-    index = 0;
-    curr_node = NULL;
-    old_total_writes = sb_disk->user_sb.total_writes;
+        db_meta = get_block_metadata(global_sb, offset+2);  //il +2 è dato dal fatto che bisogna contare anche superblocco e inode del file.
+        if (db_meta == NULL) {
+            printk("%s: impossibile eseguire la system call put_data(): si è verificato un errore col recupero dei metadati del blocco %d\n", MOD_NAME, offset);
+            kfree(kernel_lvl_src);
+            mutex_unlock(&(au_info.write_mutex));
+            printk("%s: [put_data] mutex_lock correttamente rilasciato\n", MOD_NAME);
+            atomic_fetch_add(-1, &(au_info.usages));
+            return -EIO; //-EIO = errore di input/output
+        }
 
-    /* Costrutto che itera su tutti i nodi della RCU list
-     *@param curr_node: struct rcu_node che, a ogni iterazione del ciclo, tiene traccia del nodo corrente della RCU list
-     *@param &(sb_disk->rcu_head): puntatore alla list head dell'elemento artificiale del superblock
-     *@param lh: campo della struct rcu_node di tipo struct list_head
-     */
-    list_for_each_entry_rcu(curr_node, &(sb_disk->rcu_head), lh) {        
-        if (index >= 2 && !(curr_node->is_valid))    //sto cercando un blocco libero, ovvero un blocco non valido (index >= 2 perché non voglio il superblocco o l'inode del file).
+        if (!(db_meta->is_valid))   //sto cercando un blocco libero, ovvero un blocco non valido.
             break;
 
-        index++;
-        if (index == sb_disk->user_sb.total_data_blocks+2) {  //sono andato oltre l'ultimo nodo della RCU list; significa che nessun nodo rispetta la condizione (nessun nodo è libero).
+        else if (db_meta->is_valid && db_meta->is_last) {   //arrivo qui se nessun nodo è libero.
             printk("%s: impossibile eseguire la system call put_data(): non ci sono blocchi liberi\n", MOD_NAME);
             kfree(kernel_lvl_src);
-            kfree(new_node);
-            rcu_read_unlock();
             mutex_unlock(&(au_info.write_mutex));
-            #ifdef DEBUG
-            if (mutex_is_locked(&(au_info.write_mutex))) {
-                printk("%s: [put_data] c'è un problema con mutex_unlock()\n", MOD_NAME);
-            } else {
-                printk("%s: [put_data] mutex_lock e rcu_read_lock correttamente rilasciati\n", MOD_NAME);
-            }
-            #endif
+            printk("%s: [put_data] mutex_lock correttamente rilasciato\n", MOD_NAME);
             atomic_fetch_add(-1, &(au_info.usages));
             return -ENOMEM; //-ENOMEM = errore di esaurimento della memoria
         }
 
     }
-    rcu_read_unlock();
-    #ifdef DEBUG
-    printk("%s: [put_data] rcu_read_lock correttamente rilasciato\n", MOD_NAME);
-    #endif
 
-    //inizializzazione del nuovo nodo
-    new_node->write_counter = old_total_writes+1; //l'ultimo write_counter e total_writes assumono lo stesso valore: il nuovo write_counter deve essere pari a old_total_writes+1
-    new_node->is_valid = 1;
+    //TODO: qui va l'attesa della fine del grace period.
 
-    //scrittura vera e propria del superblocco del dispositivo
-    ret = set_superblock_info(global_sb, new_node->write_counter);
+    //aggiornamento del campo next_valid del vecchio ultimo blocco valido
+    ret = set_block_metadata(global_sb, (sb_disk->last_valid)+2, offset, YES);
+    if (ret < 0) {
+        printk("%s: impossibile eseguire la system call put_data(): si è verificato un errore con la scrittura dei metadati sul blocco %d\n", MOD_NAME, sb_disk->last_valid);
+        kfree(kernel_lvl_src);
+        mutex_unlock(&(au_info.write_mutex));
+        printk("%s: [put_data] mutex_lock correttamente rilasciato\n", MOD_NAME);
+        atomic_fetch_add(-1, &(au_info.usages));
+        return -EIO; //-EIO = errore di input/output        
+    }
+
+    //scrittura del blocco target (metadati+payload)
+    ret = set_block_content(global_sb, offset+2, sb_disk->last_valid, kernel_lvl_src, bytes_to_write);
+    if (ret < 0) {
+        printk("%s: impossibile eseguire la system call put_data(): si è verificato un errore con la scrittura dei dati sul blocco %d\n", MOD_NAME, offset);
+        kfree(kernel_lvl_src);
+        mutex_unlock(&(au_info.write_mutex));
+        printk("%s: [put_data] mutex_lock correttamente rilasciato\n", MOD_NAME);
+        atomic_fetch_add(-1, &(au_info.usages));
+        return -EIO; //-EIO = errore di input/output        
+    }
+
+    if (sb_disk->first_valid == -1) //se prima della put_data() non vi erano blocchi validi, allora first_valid deve essere settato nel superblocco.
+        new_first_valid = offset;
+    else                            //altrimenti first_valid resta invariato.
+        new_first_valid = sb_disk->first_valid;
+
+    //scrittura del superblocco del dispositivo (in particolare dei campi first_valid, last_valid)
+    ret = set_superblock_info(global_sb, new_first_valid, offset);
     if (ret < 0) {
         printk("%s: impossibile eseguire la system call put_data(): si è verificato un errore con la scrittura dei dati sul superblocco\n", MOD_NAME);
         kfree(kernel_lvl_src);
-        kfree(new_node);
         mutex_unlock(&(au_info.write_mutex));
-        #ifdef DEBUG
-        if (mutex_is_locked(&(au_info.write_mutex))) {
-            printk("%s: [put_data] c'è un problema con mutex_unlock()\n", MOD_NAME);
-        } else {
-            printk("%s: [put_data] mutex_lock correttamente rilasciato\n", MOD_NAME);
-        }
-        #endif
-        atomic_fetch_add(-1, &(au_info.usages));
-        return -EIO; //-EIO = errore di input/output        
-    }
-
-    //scrittura vera e propria del blocco all'interno del dispositivo (metadati+payload)
-    ret = set_block_content(global_sb, index, new_node->write_counter, kernel_lvl_src, bytes_to_write);
-    if (ret < 0) {
-        printk("%s: impossibile eseguire la system call put_data(): si è verificato un errore con la scrittura dei dati sul blocco %d\n", MOD_NAME, index-2);
-        kfree(kernel_lvl_src);
-        kfree(new_node);
-        mutex_unlock(&(au_info.write_mutex));
-        #ifdef DEBUG
-        if (mutex_is_locked(&(au_info.write_mutex))) {
-            printk("%s: [put_data] c'è un problema con mutex_unlock()\n", MOD_NAME);
-        } else {
-            printk("%s: [put_data] mutex_lock correttamente rilasciato\n", MOD_NAME);
-        }
-        #endif
-        atomic_fetch_add(-1, &(au_info.usages));
-        return -EIO; //-EIO = errore di input/output        
-    }
-
-    //sostituzione di curr_node con new_node all'interno della RCU list
-    list_replace_rcu(&(curr_node->lh), &(new_node->lh));
-
-    mutex_unlock(&(au_info.write_mutex));
-    #ifdef DEBUG
-    if (mutex_is_locked(&(au_info.write_mutex))) {
-        printk("%s: [put_data] c'è un problema con mutex_unlock()\n", MOD_NAME);
-    } else {
         printk("%s: [put_data] mutex_lock correttamente rilasciato\n", MOD_NAME);
+        atomic_fetch_add(-1, &(au_info.usages));
+        return -EIO; //-EIO = errore di input/output        
     }
-    #endif
 
-    synchronize_rcu();  //funzione che serve a far sì che lo scrittore attenda la terminazione del grace period
+    //cleanup
+    printk("%s: la system call put_data() sul blocco %d è stata eseguita con successo\n", MOD_NAME, offset);
     kfree(kernel_lvl_src);
-    kfree(curr_node);
-
-    printk("%s: la system call put_data() sul blocco %d è stata eseguita con successo\n", MOD_NAME, index-2);
+    mutex_unlock(&(au_info.write_mutex));
+    printk("%s: [put_data] mutex_lock correttamente rilasciato\n", MOD_NAME);
     atomic_fetch_add(-1, &(au_info.usages));
-    return index-2;
+    return offset;
 
 }
 
@@ -241,12 +177,10 @@ __SYSCALL_DEFINEx(3, _get_data, int, offset, char *, destination, size_t, size)
 asmlinkage int sys_get_data(int offset, char *destination, size_t size)
 #endif
 {   
-    int index;                      //variabile che tiene traccia del numero di iterazione all'interno del ciclo che itera sulla RCU list
-    struct onefilefs_sb_info *sb_disk;
-    struct data_block_content *db_cont;
-    struct rcu_node *curr_node;
     int readable_bytes;             //numero di byte effettivamente presentu nel blocco target prima del terminatore di stringa ('\0')
     int lost_bytes_copy_to_user;    //numero di byte (tra quelli letti con kernel_read()) che non è stato possibile consegnare all'utente con copy_to_user()
+    struct onefilefs_sb_info *sb_disk;
+    struct data_block_content *db_cont;
 
     //incremento del contatore atomico degli utilizzi del file system
     atomic_fetch_add(1, &(au_info.usages));
@@ -267,57 +201,20 @@ asmlinkage int sys_get_data(int offset, char *destination, size_t size)
         size = DEFAULT_BLOCK_SIZE-METADATA_SIZE;    //in tal modo si leggono esclusivamente i dati posti nel blocco
     }
 
+    //TODO: qui va l'acquisizione dell'RCU read lock.
+
+    //recupero dei dati memorizzati nel superblocco
     sb_disk = get_superblock_info(global_sb);
     if (sb_disk == NULL) {
         printk("%s: impossibile eseguire la system call get_data(): si è verificato un errore col recupero dei dati del superblocco\n", MOD_NAME);
         atomic_fetch_add(-1, &(au_info.usages));
         return -EIO; //-EIO = errore di input/output
     }
-    if (offset < 0 || offset >= sb_disk->user_sb.total_data_blocks) {    //stiamo assumendo offset che vanno da 0 a NBLOCKS-1
+    if (offset < 0 || offset >= sb_disk->total_data_blocks) {    //stiamo assumendo offset che vanno da 0 a NBLOCKS-1.
         printk("%s: impossibile eseguire la system call get_data(): il blocco specificato (%d) non esiste\n", MOD_NAME, offset);
         atomic_fetch_add(-1, &(au_info.usages));
         return -EINVAL; //-EINVAL = parametri non validi (in questo caso int offset)
     }
-
-    //sincronizzazione RCU per effettuare l'operazione di lettura del blocco dati di posizione offset
-    #ifdef DEBUG
-    printk("%s: [get_data] acquisizione del rcu_read_lock in corso...\n", MOD_NAME);
-    #endif
-    rcu_read_lock();
-    #ifdef DEBUG
-    printk("%s: [get_data] rcu_read_lock correttamente acquisito\n", MOD_NAME);
-    #endif
-
-    index = 0;
-    curr_node = NULL;
-
-    /* Costrutto che itera su tutti i nodi della RCU list
-     *@param curr_node: struct rcu_node che, a ogni iterazione del ciclo, tiene traccia del nodo corrente della RCU list
-     *@param &(sb_disk->rcu_head): puntatore alla list head dell'elemento artificiale del superblock
-     *@param lh: campo della struct rcu_node di tipo struct list_head
-     */
-    list_for_each_entry_rcu(curr_node, &(sb_disk->rcu_head), lh) {
-        if (index == offset+2)    //il +2 è dato dal fatto che bisogna contare anche superblocco e inode del file.
-            break;        
-        index++;
-
-    }
-
-    //check sulla validità del blocco target
-    if(!(curr_node->is_valid)) {
-        printk("%s: impossibile eseguire la system call get_data(): il blocco specificato (%d) non è valido\n", MOD_NAME, offset);
-        rcu_read_unlock();
-        #ifdef DEBUG
-        printk("%s: [get_data] rcu_read_lock correttamente rilasciato\n", MOD_NAME);
-        #endif
-        atomic_fetch_add(-1, &(au_info.usages));
-        return -ENODATA; //-ENODATA = nessun dato disponibile
-    }
-
-    rcu_read_unlock();
-    #ifdef DEBUG
-    printk("%s: [get_data] rcu_read_lock correttamente rilasciato\n", MOD_NAME);
-    #endif
 
     //recupero del contenuto del blocco da leggere
     db_cont = get_block_content(global_sb, offset+2);   //il +2 è dato dal fatto che bisogna contare anche superblocco e inode del file.
@@ -327,22 +224,21 @@ asmlinkage int sys_get_data(int offset, char *destination, size_t size)
         return -EIO; //-EIO = errore di input/output
     }
 
-    //considero il numero di byte letti come la lunghezza della stringa letta (eventualmente fino a '\0'); in mancanza di '\0', verrà restituito ret.
-    readable_bytes = (int)strnlen(&(db_cont->payload[0]), size);
-    if (readable_bytes == 0) {
-        printk("%s: la system call get_data() sul blocco %d è stata eseguita con successo ma non ci sono dati da leggere\n", MOD_NAME, offset);
+    //TODO: qui va il rilascio dell'RCU read lock.
+
+    //check sulla validità del blocco target
+    if(!(db_cont->metadata.is_valid)) {
+        printk("%s: impossibile eseguire la system call get_data(): il blocco specificato (%d) non è valido\n", MOD_NAME, offset);
         atomic_fetch_add(-1, &(au_info.usages));
-        return 0;
+        return -ENODATA; //-ENODATA = nessun dato disponibile
     }
-    else if (readable_bytes > 0 && readable_bytes < size)
-        readable_bytes++;   //strnlen() non conta l'eventuale '\0': lo aggiungo a mano.
 
     //consegna dei dati all'utente
-    lost_bytes_copy_to_user = copy_to_user(destination, &(db_cont->payload[0]), readable_bytes);
+    lost_bytes_copy_to_user = copy_to_user(destination, &(db_cont->payload[0]), size);
 
     printk("%s: la system call get_data() sul blocco %d è stata eseguita con successo\n", MOD_NAME, offset);
     atomic_fetch_add(-1, &(au_info.usages));
-    return readable_bytes - lost_bytes_copy_to_user;
+    return size - lost_bytes_copy_to_user;
 
 }
 
@@ -352,11 +248,20 @@ __SYSCALL_DEFINEx(1, _invalidate_data, int, offset)
 asmlinkage int sys_invalidate_data(int offset)
 #endif
 {
-    int index;
     int ret;
+    int superblock_to_set;  //booleano che indica se bisognerà aggiornare first_valid e/o last_valid nel superblocco
+    int next_to_set;        //booleano che indica se bisognerà aggiornare prev_valid nel blocco successivo a quello da invalidare
+    int prev_to_set;        //booleano che indica se bisognerà aggiornare next_valid nel blocco precedente a quello da invalidare
+    int new_first_valid;
+    int new_last_valid;
     struct onefilefs_sb_info *sb_disk;
-    struct rcu_node *new_node;
-    struct rcu_node *curr_node;
+    struct data_block_metadata *db_meta;
+
+    superblock_to_set = NO;
+    next_to_set = NO;
+    prev_to_set = NO;
+    new_first_valid = -1;
+    new_last_valid = -1;
 
     //incremento del contatore atomico degli utilizzi del file system
     atomic_fetch_add(1, &(au_info.usages));
@@ -368,143 +273,100 @@ asmlinkage int sys_invalidate_data(int offset)
         return -ENODEV; //-ENODEV = file system non esistente
     }
 
-    //creazione del nodo da inserire nella RCU list al posto di quello da invalidare
-    new_node = kmalloc(sizeof(struct rcu_node), GFP_KERNEL);
-    if (!new_node) {
-        printk("%s: impossibile eseguire la system call invalidate_data(): si è verificato un errore con l'allocazione della memoria\n", MOD_NAME);
-        atomic_fetch_add(-1, &(au_info.usages));
-        return -ENOMEM; //-ENOMEM = errore di esaurimento della memoria 
-    }
-
     //utilizzo di mutex per sincronizzare le scritture tra loro (di fatto anche l'invalidazione risulta essere una scrittura nella RCU list)
-    #ifdef DEBUG
-    printk("%s: [invalidate_data] acquisizione del mutex_lock in corso...\n", MOD_NAME);
-    #endif
     ret = mutex_trylock(&(au_info.write_mutex));
     if (ret == 0) {
-        #ifdef DEBUG
-        printk("%s: impossibile eseguire la system call put_data(): il lock è occupato\n", MOD_NAME);
-        #endif
-        kfree(new_node);
         atomic_fetch_add(-1, &(au_info.usages));
         return -EBUSY;
     }
-    #ifdef DEBUG
     printk("%s: [invalidate_data] mutex_lock correttamente acquisito\n", MOD_NAME);
-    #endif
 
+    //recupero dei dati memorizzati nel superblocco
     sb_disk = get_superblock_info(global_sb);
     if (sb_disk == NULL) {
         printk("%s: impossibile eseguire la system call invalidate_data(): si è verificato un errore col recupero dei dati del superblocco\n", MOD_NAME);
-        kfree(new_node);
         mutex_unlock(&(au_info.write_mutex));
-        #ifdef DEBUG
-        if (mutex_is_locked(&(au_info.write_mutex))) {
-            printk("%s: [invalidate_data] c'è un problema con mutex_unlock()\n", MOD_NAME);
-        } else {
-            printk("%s: [invalidate_data] mutex_lock correttamente rilasciato\n", MOD_NAME);
-        }
-        #endif
+        printk("%s: [invalidate_data] mutex_lock correttamente rilasciato\n", MOD_NAME);
         atomic_fetch_add(-1, &(au_info.usages));
         return -EIO; //-EIO = errore di input/output
     }
-    if (offset < 0 || offset >= sb_disk->user_sb.total_data_blocks) {    //stiamo assumendo offset che vanno da 0 a NBLOCKS-1
+    if (offset < 0 || offset >= sb_disk->total_data_blocks) {   //stiamo assumendo offset che vanno da 0 a NBLOCKS-1
         printk("%s: impossibile eseguire la system call invalidate_data(): il blocco specificato (%d) non esiste\n", MOD_NAME, offset);
-        kfree(new_node);
         mutex_unlock(&(au_info.write_mutex));
-        #ifdef DEBUG
-        if (mutex_is_locked(&(au_info.write_mutex))) {
-            printk("%s: [invalidate_data] c'è un problema con mutex_unlock()\n", MOD_NAME);
-        } else {
-            printk("%s: [invalidate_data] mutex_lock correttamente rilasciato\n", MOD_NAME);
-        }
-        #endif
+        printk("%s: [invalidate_data] mutex_lock correttamente rilasciato\n", MOD_NAME);
         atomic_fetch_add(-1, &(au_info.usages));
         return -EINVAL; //-EINVAL = parametri non validi (in questo caso int offset)
     }
 
-    //sincronizzazione RCU per effettuare il retrieve del blocco dati di posizione offset
-    #ifdef DEBUG
-    printk("%s: [invalidate_data] acquisizione del rcu_read_lock in corso...\n", MOD_NAME);
-    #endif
-    rcu_read_lock();
-    #ifdef DEBUG
-    printk("%s: [invalidate_data] rcu_read_lock correttamente acquisito\n", MOD_NAME);
-    #endif
-
-    index = 0;
-    curr_node = NULL;
-
-    /* Costrutto che itera su tutti i nodi della RCU list
-     *@param curr_node: struct rcu_node che, a ogni iterazione del ciclo, tiene traccia del nodo corrente della RCU list
-     *@param &(sb_disk->rcu_head): puntatore alla list head dell'elemento artificiale del superblock
-     *@param lh: campo della struct rcu_node di tipo struct list_head
-     */
-    list_for_each_entry_rcu(curr_node, &(sb_disk->rcu_head), lh) {
-        if (index == offset+2)    //il +2 è dato dal fatto che bisogna contare anche superblocco e inode del file.
-            break;        
-        index++;
-
+    //recupero dei metadati del blocco da leggere
+    db_meta = get_block_metadata(global_sb, offset+2);   //il +2 è dato dal fatto che bisogna contare anche superblocco e inode del file.
+    if (db_meta == NULL) {
+        printk("%s: impossibile eseguire la system call invalidate_data(): si è verificato un errore col recupero dei metadati del blocco %d\n", MOD_NAME, offset);
+        mutex_unlock(&(au_info.write_mutex));
+        printk("%s: [invalidate_data] mutex_lock correttamente rilasciato\n", MOD_NAME);
+        atomic_fetch_add(-1, &(au_info.usages));
+        return -EIO; //-EIO = errore di input/output
     }
 
     //check sulla validità del blocco target
-    if(!(curr_node->is_valid)) {
+    if (!(db_meta->is_valid)) {
         printk("%s: impossibile eseguire la system call invalidate_data(): il blocco specificato (%d) è già invalido\n", MOD_NAME, offset);
-        kfree(new_node);
-        rcu_read_unlock();
         mutex_unlock(&(au_info.write_mutex));
-        #ifdef DEBUG
-        if (mutex_is_locked(&(au_info.write_mutex))) {
-            printk("%s: [invalidate_data] c'è un problema con mutex_unlock()\n", MOD_NAME);
-        } else {
-            printk("%s: [invalidate_data] mutex_lock e rcu_read_lock correttamente rilasciati\n", MOD_NAME);
-        }
-        #endif
+        printk("%s: [invalidate_data] mutex_lock e rcu_read_lock correttamente rilasciati\n", MOD_NAME);
         atomic_fetch_add(-1, &(au_info.usages));
         return -ENODATA; //-ENODATA = nessun dato disponibile
     }
-    rcu_read_unlock();
-    #ifdef DEBUG
-    printk("%s: [invalidate_data] rcu_read_lock correttamente rilasciato\n", MOD_NAME);
-    #endif
 
-    //inizializzazione del nuovo nodo
-    new_node->write_counter = curr_node->write_counter; //non vado a modificare il write counter (non si tratta di un'operazione di put_data)
-    new_node->is_valid = 0;
+    //caso in cui il blocco target era l'unico blocco valido
+    if (offset == sb_disk->first_valid && offset == sb_disk->last_valid) {
+        superblock_to_set = YES;
+        //new_first_valid e new_last_valid sono già correttamente settati a -1.
+    }
+    //caso in cui il blocco target era il primo blocco valido (ma non l'unico)
+    else if (offset == sb_disk->first_valid && offset != sb_disk->last_valid) {
+        superblock_to_set = YES;
+        next_to_set = YES;
+        new_first_valid = db_meta->next_valid;
+        new_last_valid = sb_disk->last_valid;
+    }
+    //caso in cui il blocco target era l'ultimo blocco valido (ma non il primo)
+    else if (offset != sb_disk->first_valid && offset == sb_disk->last_valid) {
+        superblock_to_set = YES;
+        prev_to_set = YES;
+        new_first_valid = sb_disk->first_valid;
+        new_last_valid = db_meta->prev_valid;
+    }
+    //caso in cui il blocco target non era né il primo né l'ultimo blocco valido
+    else {
+        prev_to_set = YES;
+        next_to_set = YES;
+    }
 
-    //invalidazione vera e propria del blocco all'interno del dispositivo (interessano in particolar modo solo i metadati)
-    ret = invalidate_block_content(global_sb, offset+2);
+    if (superblock_to_set == YES) {
+
+    }
+
+    if (prev_to_set == YES) {
+
+    }
+
+    if (next_to_set == YES) {
+        
+    }
+
+    //invalidazione del blocco (interessano in particolar modo solo i metadati)
+    ret = invalidate_block_content(global_sb, offset+2);    //il +2 è dato dal fatto che bisogna contare anche superblocco e inode del file.
     if (ret < 0) {
         printk("%s: impossibile eseguire la system call invalidate_data(): si è verificato un errore con l'invalidazione dei dati sul blocco %d\n", MOD_NAME, offset);
-        kfree(new_node);
         mutex_unlock(&(au_info.write_mutex));
-        #ifdef DEBUG
-        if (mutex_is_locked(&(au_info.write_mutex))) {
-            printk("%s: [invalidate_data] c'è un problema con mutex_unlock()\n", MOD_NAME);
-        } else {
-            printk("%s: [invalidate_data] mutex_lock correttamente rilasciato\n", MOD_NAME);
-        }
-        #endif
+        printk("%s: [invalidate_data] mutex_lock correttamente rilasciato\n", MOD_NAME);
         atomic_fetch_add(-1, &(au_info.usages));
         return -EIO; //-EIO = errore di input/output        
     }
 
-    //sostituzione di curr_node con new_node all'interno della RCU list
-    list_replace_rcu(&(curr_node->lh), &(new_node->lh));
-
-    mutex_unlock(&(au_info.write_mutex));
-    #ifdef DEBUG
-    if (mutex_is_locked(&(au_info.write_mutex))) {
-        printk("%s: [invalidate_data] c'è un problema con mutex_unlock()\n", MOD_NAME);
-    } else {
-        printk("%s: [invalidate_data] mutex_lock correttamente rilasciato\n", MOD_NAME);
-    }
-    #endif
-
-    synchronize_rcu();  //funzione che serve a far sì che lo scrittore attenda la terminazione del grace period
-    kfree(curr_node);
-
     printk("%s: la system call invalidate_data() sul blocco %d è stata eseguita con successo\n", MOD_NAME, offset);
+    mutex_unlock(&(au_info.write_mutex));
+    printk("%s: [invalidate_data] mutex_lock correttamente rilasciato\n", MOD_NAME);
     atomic_fetch_add(-1, &(au_info.usages));
     return 0;
 

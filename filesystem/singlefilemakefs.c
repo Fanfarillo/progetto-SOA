@@ -22,7 +22,7 @@ int main(int argc, char *argv[])
 	int fd;
 	long unsigned int nbytes;
 	ssize_t ret;
-	struct onefilefs_sb_user_info sb;
+	struct onefilefs_sb_info sb;
 	struct onefilefs_inode root_inode;
 	struct onefilefs_inode file_inode;
 	struct onefilefs_dir_record record;
@@ -32,8 +32,8 @@ int main(int argc, char *argv[])
 	int i, block_index;	//per i cicli for
 	int num_data_blocks;
 	int num_data_blocks_to_write;
-	unsigned int numeric_metadata;	//i primi 31 bit costituiscono il write_counter, mentre l'ultimo è il bit di validità del blocco.
-	unsigned char *block_metadata;
+	struct data_block_metadata struct_metadata;
+	unsigned char *char_metadata;
 
 	//il programma prende come argomento il dispositivo di destinazione in cui verrà creato il file system.
 	if (argc != 3) {
@@ -67,15 +67,16 @@ int main(int argc, char *argv[])
 	}
 
 	//pack the superblock
-	sb.version = 1;//file system version
+	sb.version = FS_VERSION;	//file system version
 	sb.magic = MAGIC;
 	sb.block_size = DEFAULT_BLOCK_SIZE;
 	sb.total_data_blocks = num_data_blocks;
-	sb.total_writes = num_data_blocks_to_write;
+	sb.first_valid = 0;
+	sb.last_valid = num_data_blocks_to_write - 1;
 	//scrittura del superblocco (block 0) del file system, che comprende info come numero di versione, magic number e dimensione dei blocchi.
-	ret = write(fd, (char *)&sb, USER_SUPERBLOCK_STRUCT_SIZE);
+	ret = write(fd, (char *)&sb, SUPERBLOCK_STRUCT_SIZE);
 
-	if (ret != USER_SUPERBLOCK_STRUCT_SIZE) {
+	if (ret != SUPERBLOCK_STRUCT_SIZE) {
 		printf("Bytes written [%d] are not equal to sb size.\n", (int)ret);
 		fflush(stdout);
 		close(fd);
@@ -85,7 +86,7 @@ int main(int argc, char *argv[])
 	fflush(stdout);
 
 	//padding for superblock
-	nbytes = DEFAULT_BLOCK_SIZE - USER_SUPERBLOCK_STRUCT_SIZE;
+	nbytes = DEFAULT_BLOCK_SIZE - SUPERBLOCK_STRUCT_SIZE;
 	block_padding = malloc(nbytes);
 	ret = write(fd, block_padding, nbytes);	//padding per il superblocco
 
@@ -147,15 +148,20 @@ int main(int argc, char *argv[])
 				return -1;
 			}
 
-			//per il primo blocco i primi 31 bit costituiscono uno 0 e l'ultimo è pari a 1; per il secondo blocco i primi 31 bit costituiscono un 1 e l'ultimo è pari a 1; e così via.
-			numeric_metadata = (block_index+1) << 1;	//metadata = 2*(block_index+1); ciò porta a liberare l'ultimo bit del numero e di traslare tutti gli altri bit di una posizione verso sx.
-			numeric_metadata++;							//inizializzazione dell'ultimo bit (bit di validità) a 1.
-			//conversione di numeric_metadata in stringa (block_metadata)
-			block_metadata = (unsigned char *)&numeric_metadata;
+			struct_metadata.next_valid = block_index + 1;
+			struct_metadata.prev_valid = block_index - 1;	//il blocco di indice 0 avrà prev_valid pari a -1; -1 significa "nessun blocco".
+			struct_metadata.is_valid = 1;
+			if (block_index == num_data_blocks-1)
+				struct_metadata.is_last = 1;
+			else
+				struct_metadata.is_last = 0;
+
+			//conversione di struct_metadata in stringa (char_metadata)
+			char_metadata = (unsigned char *)&struct_metadata;
 
 			//scrittura dei metadati del blocco (1 solo byte per volta)
-			for(i=0; i<sizeof(unsigned int); i++) {
-				ret = write(fd, &block_metadata[i], 1);
+			for(i=0; i<sizeof(struct data_block_metadata); i++) {
+				ret = write(fd, &char_metadata[i], 1);
 				if (ret != 1) {
 					printf("Writing file datablock has failed.\n");
 					fflush(stdout);
@@ -197,7 +203,34 @@ int main(int argc, char *argv[])
 
 		//caso in cui all'interno del blocco block_index va inserito esclusivamente padding
 		else {
-			nbytes = DEFAULT_BLOCK_SIZE;
+
+			struct_metadata.next_valid = -1;	//-1 significa "nessun blocco".
+			struct_metadata.prev_valid = -1;	//-1 significa "nessun blocco".
+			struct_metadata.is_valid = 0;
+			if (block_index == num_data_blocks-1)
+				struct_metadata.is_last = 1;
+			else
+				struct_metadata.is_last = 0;
+
+			//conversione di struct_metadata in stringa (char_metadata)
+			char_metadata = (unsigned char *)&struct_metadata;
+
+			//scrittura dei metadati del blocco (1 solo byte per volta)
+			for(i=0; i<sizeof(struct data_block_metadata); i++) {
+				ret = write(fd, &char_metadata[i], 1);
+				if (ret != 1) {
+					printf("Writing file datablock has failed.\n");
+					fflush(stdout);
+					close(fd);
+					return -1;		
+				}
+
+			}
+
+			printf("Metadata of datablock %d written successfully.\n", block_index);
+			fflush(stdout);
+
+			nbytes = DEFAULT_BLOCK_SIZE - METADATA_SIZE;
 			block_padding = malloc(nbytes);
 			ret = write(fd, block_padding, nbytes);	//padding per il blocco dati block_index
 			if (ret != nbytes) {

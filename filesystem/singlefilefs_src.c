@@ -3,7 +3,6 @@
 #include <linux/init.h>
 #include <linux/module.h>
 #include <linux/mutex.h>
-#include <linux/rculist.h>
 #include <linux/slab.h>
 #include <linux/string.h>
 #include <linux/time.h>
@@ -30,49 +29,6 @@ static struct dentry_operations singlefilefs_dentry_ops = {
 //qui iniziano le variabili globali definite direttamente da me
 struct auxiliary_info au_info = {0};
 struct super_block *global_sb;
-
-//AUXILIAR FUNCTIONS PROTOTYPES
-int populate_rcu_list(struct list_head *, int);
-
-//funzione invocata da singlefilefs_fill_super() per agganciare tutti quanti i nodi relativi ai blocchi del nostro file system alla lista collegata (la RCU list)
-int populate_rcu_list(struct list_head *head, int num_data_blocks) {
-
-    int block_index;        //per il ciclo for
-    int num_written_data_blocks;
-    struct rcu_node *node;
-
-    //calcolo del numero di blocchi che sono stati inizializzati in fase di creazione del file system; questo permette di stabilire quanti nodi dovranno avere i metadati inizializzati.
-    num_written_data_blocks = sizeof(file_body)/sizeof(file_body[0]); //funziona perché stiamo dividendo la dimensione di un array di puntatori per la dimensione di un puntatore.
-
-    for(block_index=0; block_index<num_data_blocks+2; block_index++) {    //vengono allocati anche i due blocchi iniziali (superblocco e inode del file)
-        node = kmalloc(sizeof(struct rcu_node), GFP_KERNEL);
-        if (!node)
-            return -1;
-
-        //caso in cui il blocco block_index è il superblocco o l'inode del file
-        if (block_index < 2) {
-            node->is_valid = 1;
-            node->write_counter = 0;
-        }        
-        //caso in cui il blocco block_index è un blocco dati effettivamente inizializzato
-        else if (block_index >= 2 && block_index < num_written_data_blocks+2) {
-            node->is_valid = 1;
-            node->write_counter = block_index-1;
-        }
-        //caso in cui il blocco block_index è un blocco dati non ancora inizializzato
-        else {
-            node->is_valid = 0;
-            node->write_counter = 0;
-        }
-
-        //inserimento del nuovo nodo all'interno della RCU list; avviene senza sincronizzazione perché siamo ancora in fase di setup e non può esservi concorrenza.
-        list_add_tail_rcu(&(node->lh), head);
-
-    }
-
-    return 0;
-
-}
 
 //funzione che ha il compito di istanziare il superblocco del filesystem "singlefilefs"
 int singlefilefs_fill_super(struct super_block *sb, void *data, int silent) {   
@@ -108,17 +64,6 @@ int singlefilefs_fill_super(struct super_block *sb, void *data, int silent) {
     magic = sb_disk->user_sb.magic; //estrazione del magic number a partire dalle informazioni ottenute con sb_bread()
     num_expected_blocks = sb_disk->user_sb.total_data_blocks;   //estrazione del numero massimo di blocchi che è stato imposto a tempo di compilazione (DATA_BLOCKS)
 
-    /* Inizializzazione (all'interno del superblocco) del campo di tipo struct list_head che punta, mediante puntatori next e prev, rispettivamente al primo e
-     * all'ultimo elemento della RCU list. Tale lista doppiamente collegata rappresenta tutti quanti i blocchi del file e comprende anche il superblocco e l'inode
-     * del file. Viene inoltre utilizzata come supporto per eseguire in modo agevole gli accessi in maniera sincronizzata (appunto mediante un approccio RCU).
-     */
-    INIT_LIST_HEAD_RCU(&(sb_disk->rcu_head));
-
-    //popolamento di tutta quanta la RCU list con una funzione ausiliaria (populate_rcu_list()); restituisce 0 in caso di successo, un valore negativo altrimenti.
-    ret = populate_rcu_list(&(sb_disk->rcu_head), num_expected_blocks);
-    if (ret < 0) {
-        return -ENOMEM; //-ENOMEM = errore di esaurimento della memoria
-    }
     brelse(bh);  //rilascio del buffer head bh
 
     //lettura dell'inode dell'unico file del file system
@@ -141,7 +86,7 @@ int singlefilefs_fill_super(struct super_block *sb, void *data, int silent) {
     }
 
     sb->s_fs_info = NULL; //FS specific data (the magic number) already reported into the generic superblock
-    sb->s_op = &singlefilefs_super_ops;//set our own operations
+    sb->s_op = &singlefilefs_super_ops;
 
     //di seguito verrà allocato un inode per la root del file system
     root_inode = iget_locked(sb, 0);//get a root inode indexed with 0 from cache
@@ -156,17 +101,17 @@ int singlefilefs_fill_super(struct super_block *sb, void *data, int silent) {
      * i_mode: permessi di accesso
      * i_atime: timestamp
      */
-    root_inode->i_ino = SINGLEFILEFS_ROOT_INODE_NUMBER;//this is actually 10
+    root_inode->i_ino = SINGLEFILEFS_ROOT_INODE_NUMBER; //this is actually 10
     #if LINUX_VERSION_CODE >= KERNEL_VERSION(6,3,0)
-        inode_init_owner(&nop_mnt_idmap, root_inode, NULL, S_IFDIR);
+        inode_init_owner(&nop_mnt_idmap, root_inode, NULL, S_IFDIR);    //set the root user as owned of the FS root
     #elif LINUX_VERSION_CODE >= KERNEL_VERSION(5,12,0)
-        inode_init_owner(&init_user_ns, root_inode, NULL, S_IFDIR); //set the root user as owned of the FS root
+        inode_init_owner(&init_user_ns, root_inode, NULL, S_IFDIR);
     #else
         inode_init_owner(root_inode, NULL, S_IFDIR);
     #endif
     root_inode->i_sb = sb;
-    root_inode->i_op = &onefilefs_inode_ops;//set our inode operations
-    root_inode->i_fop = &onefilefs_dir_operations;//set our file operations
+    root_inode->i_op = &onefilefs_inode_ops;        //set our inode operations
+    root_inode->i_fop = &onefilefs_dir_operations;  //set our file operations
     //update access permission
     root_inode->i_mode = S_IFDIR | S_IRUSR | S_IRGRP | S_IROTH | S_IWUSR | S_IWGRP | S_IXUSR | S_IXGRP | S_IXOTH;
 

@@ -20,9 +20,10 @@
 
 #define UNIQUE_FILE_NAME "the-file"
 
-//qui iniziano le define aggiunte direttamente da me
-#define METADATA_SIZE 4					//numero di byte che compongono i metadati di ciascun blocco
-#define USER_SUPERBLOCK_STRUCT_SIZE (4*sizeof(uint64_t) + sizeof(unsigned int))	//numero di byte occupati da struct onefilefs_sb_user_info
+//qui iniziano le define aggiunte da me
+#define FS_VERSION 1
+#define METADATA_SIZE 8								//numero di byte che compongono i metadati di ciascun blocco
+#define SUPERBLOCK_STRUCT_SIZE 6*sizeof(uint64_t)	//numero di byte occupati da struct onefilefs_sb_info
 
 //inode definition
 struct onefilefs_inode {
@@ -40,14 +41,29 @@ struct onefilefs_dir_record {
 	uint64_t inode_no;
 };
 
-//superblock (partial) definition: nel superblocco andrebbe anche il campo struct list_head rcu_head ma non è possibile definirlo in questo file header per motivi di import.
-struct onefilefs_sb_user_info {
+//superblock definition
+struct onefilefs_sb_info {
 	uint64_t version;
 	uint64_t magic;
 	uint64_t block_size;
 	//qui iniziano i campi definiti da me
 	uint64_t total_data_blocks;
-	unsigned int total_writes;	//contatore atomico globale del numero di scritture; corrisponde al numero d'ordine (write_counter) assegnato all'ultimo blocco scritto.
+	uint64_t first_valid;	//primo blocco valido in ordine temporale
+	uint64_t last_valid;	//ultimo blocco valido in ordine temporale
+};
+
+//data block metadata definition
+struct data_block_metadata {
+	int next_valid : 31;	//indica il prossimo blocco reso valido in ordine temporale; serve a stabilire il corretto ordinamento delle scritture sui blocchi.
+	int prev_valid : 31;	//indica il precedente blocco reso valido in ordine temporale; serve a stabilire il corretto ordinamento delle scritture sui blocchi.
+	int is_valid : 1;		//flag che indica se il blocco è valido o meno; è un campo a 1 bit.
+	int is_last : 1;		//flag che indica se il blocco è l'ultimo fisicamente presente nel device o meno.
+};
+
+//data block complete definition
+struct data_block_content {
+	struct data_block_metadata metadata;
+	char payload[DEFAULT_BLOCK_SIZE-METADATA_SIZE];
 };
 
 //file.c

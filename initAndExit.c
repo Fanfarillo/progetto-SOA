@@ -25,8 +25,8 @@ static int singlefilefs_init(void) {
 
     int ret, i;
 
-    printk("%s: usleep example received sys_call_table address %px\n",MOD_NAME,(void*)the_syscall_table);
-    printk("%s: initializing - hacked entries %d\n",MOD_NAME,HACKED_ENTRIES);
+    printk("%s: usleep example received sys_call_table address %px\n", MOD_NAME, (void*)the_syscall_table);
+    printk("%s: initializing - hacked entries %d\n", MOD_NAME,HACKED_ENTRIES);
 
     //definizione delle system call da sostuire alle prime tre ni_syscall
     new_syscall_array[0] = (unsigned long)sys_put_data;
