@@ -230,7 +230,7 @@ asmlinkage int sys_get_data(int offset, char *destination, size_t size)
     }
 
     //TODO: qui va il rilascio dell'RCU read lock.
-    printk("%s: lettura sul blocco %d - next_valid=%d - prev_valid=%d - is_valid=%d - first_valid=%llu - last_valid=%llu\n", MOD_NAME, offset, db_cont->metadata.next_valid, db_cont->metadata.prev_valid, db_cont->metadata.is_valid, sb_disk->first_valid, sb_disk->last_valid);
+    printk("%s: lettura sul blocco %d - next_valid=%d - prev_valid=%d - is_valid=%d - first_valid=%lld - last_valid=%lld\n", MOD_NAME, offset, db_cont->metadata.next_valid, db_cont->metadata.prev_valid, db_cont->metadata.is_valid, sb_disk->first_valid, sb_disk->last_valid);
 
     //check sulla validità del blocco target
     if(!(db_cont->metadata.is_valid)) {
