@@ -22,8 +22,8 @@
 
 //qui iniziano le define aggiunte da me
 #define FS_VERSION 1
-#define METADATA_SIZE 8	//numero di byte che compongono i metadati di ciascun blocco
-#define SUPERBLOCK_STRUCT_SIZE 4*sizeof(uint64_t)+2*sizeof(int64_t)	//numero di byte occupati da struct onefilefs_sb_info
+#define METADATA_SIZE 8								//numero di byte che compongono i metadati di ciascun blocco
+#define SUPERBLOCK_STRUCT_SIZE 6*sizeof(uint64_t)	//numero di byte occupati da struct onefilefs_sb_info
 
 //inode definition
 struct onefilefs_inode {
@@ -48,8 +48,8 @@ struct onefilefs_sb_info {
 	uint64_t block_size;
 	//qui iniziano i campi definiti da me
 	uint64_t total_data_blocks;
-	int64_t first_valid;	//primo blocco valido in ordine temporale
-	int64_t last_valid;	//ultimo blocco valido in ordine temporale
+	uint64_t first_valid;	//primo blocco valido in ordine temporale
+	uint64_t last_valid;	//ultimo blocco valido in ordine temporale
 };
 
 //data block metadata definition

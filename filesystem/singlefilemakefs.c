@@ -88,6 +88,7 @@ int main(int argc, char *argv[])
 	//padding for superblock
 	nbytes = DEFAULT_BLOCK_SIZE - SUPERBLOCK_STRUCT_SIZE;
 	block_padding = malloc(nbytes);
+	memset(block_padding, 0, nbytes);
 	ret = write(fd, block_padding, nbytes);	//padding per il superblocco
 
 	if (ret != nbytes) {
@@ -122,6 +123,7 @@ int main(int argc, char *argv[])
 	//padding for block 1
 	nbytes = DEFAULT_BLOCK_SIZE - sizeof(file_inode);
 	block_padding = malloc(nbytes);
+	memset(block_padding, 0, nbytes);
 	ret = write(fd, block_padding, nbytes);	//padding per l'inode del file
 
 	if (ret != nbytes) {
@@ -188,6 +190,7 @@ int main(int argc, char *argv[])
 			//padding per il blocco
 			nbytes = DEFAULT_BLOCK_SIZE - METADATA_SIZE - strlen(file_body[block_index]);
 			block_padding = malloc(nbytes);
+			memset(block_padding, 0, nbytes);
 			ret = write(fd, block_padding, nbytes);	//padding per il blocco dati block_index
 			if (ret != nbytes) {
 				printf("The padding bytes are not written properly. Retry your mkfs\n");
@@ -228,6 +231,7 @@ int main(int argc, char *argv[])
 
 			nbytes = DEFAULT_BLOCK_SIZE - METADATA_SIZE;
 			block_padding = malloc(nbytes);
+			memset(block_padding, 0, nbytes);
 			ret = write(fd, block_padding, nbytes);	//padding per il blocco dati block_index
 			if (ret != nbytes) {
 				printf("The padding bytes are not written properly. Retry your mkfs\n");
