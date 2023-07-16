@@ -88,7 +88,6 @@ int main(int argc, char *argv[])
 	//padding for superblock
 	nbytes = DEFAULT_BLOCK_SIZE - SUPERBLOCK_STRUCT_SIZE;
 	block_padding = malloc(nbytes);
-	memset(block_padding, 0, nbytes);
 	ret = write(fd, block_padding, nbytes);	//padding per il superblocco
 
 	if (ret != nbytes) {
@@ -123,7 +122,6 @@ int main(int argc, char *argv[])
 	//padding for block 1
 	nbytes = DEFAULT_BLOCK_SIZE - sizeof(file_inode);
 	block_padding = malloc(nbytes);
-	memset(block_padding, 0, nbytes);
 	ret = write(fd, block_padding, nbytes);	//padding per l'inode del file
 
 	if (ret != nbytes) {
@@ -150,13 +148,13 @@ int main(int argc, char *argv[])
 				return -1;
 			}
 
-			struct_metadata.next_valid = block_index + 1;
+			if (block_index == num_data_blocks_to_write-1)	//caso in cui il blocco successivo sarà inizialmente invalido
+				struct_metadata.next_valid = -1;
+			else
+				struct_metadata.next_valid = block_index + 1;
+			
 			struct_metadata.prev_valid = block_index - 1;	//il blocco di indice 0 avrà prev_valid pari a -1; -1 significa "nessun blocco".
 			struct_metadata.is_valid = 1;
-			if (block_index == num_data_blocks-1)
-				struct_metadata.is_last = 1;
-			else
-				struct_metadata.is_last = 0;
 
 			//conversione di struct_metadata in stringa (char_metadata)
 			char_metadata = (unsigned char *)&struct_metadata;
@@ -190,7 +188,6 @@ int main(int argc, char *argv[])
 			//padding per il blocco
 			nbytes = DEFAULT_BLOCK_SIZE - METADATA_SIZE - strlen(file_body[block_index]);
 			block_padding = malloc(nbytes);
-			memset(block_padding, 0, nbytes);
 			ret = write(fd, block_padding, nbytes);	//padding per il blocco dati block_index
 			if (ret != nbytes) {
 				printf("The padding bytes are not written properly. Retry your mkfs\n");
@@ -210,10 +207,6 @@ int main(int argc, char *argv[])
 			struct_metadata.next_valid = -1;	//-1 significa "nessun blocco".
 			struct_metadata.prev_valid = -1;	//-1 significa "nessun blocco".
 			struct_metadata.is_valid = 0;
-			if (block_index == num_data_blocks-1)
-				struct_metadata.is_last = 1;
-			else
-				struct_metadata.is_last = 0;
 
 			//conversione di struct_metadata in stringa (char_metadata)
 			char_metadata = (unsigned char *)&struct_metadata;
@@ -235,7 +228,6 @@ int main(int argc, char *argv[])
 
 			nbytes = DEFAULT_BLOCK_SIZE - METADATA_SIZE;
 			block_padding = malloc(nbytes);
-			memset(block_padding, 0, nbytes);
 			ret = write(fd, block_padding, nbytes);	//padding per il blocco dati block_index
 			if (ret != nbytes) {
 				printf("The padding bytes are not written properly. Retry your mkfs\n");

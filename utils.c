@@ -64,7 +64,7 @@ struct data_block_metadata *get_block_metadata(struct super_block *global_sb, in
     if (db_cont == NULL) {
         return NULL;
     }
-    return db_cont->metadata;
+    return &(db_cont->metadata);
 
 }
 
