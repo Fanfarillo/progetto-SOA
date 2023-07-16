@@ -230,7 +230,7 @@ asmlinkage int sys_get_data(int offset, char *destination, size_t size)
     }
 
     //TODO: qui va il rilascio dell'RCU read lock.
-    printk("%s: lettura sul blocco %d - next_valid=%d - prev_valid=%d - is_valid=%d\n", MOD_NAME, offset, db_cont->metadata.next_valid, db_cont->metadata.prev_valid, db_cont->metadata.is_valid);
+    printk("%s: lettura sul blocco %d - next_valid=%d - prev_valid=%d - is_valid=%d - first_valid=%llu - last_valid=%llu\n", MOD_NAME, offset, db_cont->metadata.next_valid, db_cont->metadata.prev_valid, db_cont->metadata.is_valid, sb_disk->first_valid, sb_disk->last_valid);
 
     //check sulla validità del blocco target
     if(!(db_cont->metadata.is_valid)) {
@@ -507,7 +507,7 @@ static ssize_t dev_read(struct file *filp, char *buf, size_t len, loff_t *off) {
 	        return -EIO;
         }
 
-        read_data = (char *)(db_cont+METADATA_SIZE);    //l'offset da cui far partire ciascuna lettura di un singolo blocco deve corrispondere alla fine dei metadati.
+        read_data = &(db_cont->payload[0]); //l'offset da cui far partire ciascuna lettura di un singolo blocco deve corrispondere alla fine dei metadati.
         //ora si copiano i dati dal buffer del kernel (db_cont+METADATA_SIZE) al buffer dell'applicazione (buf), passato come parametro a onefilefs_read().
         ret = copy_to_user(buf, read_data, len);
 
