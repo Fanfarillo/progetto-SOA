@@ -56,8 +56,9 @@ struct onefilefs_sb_info {
 struct data_block_metadata {
 	int next_valid : 31;	//indica il prossimo blocco reso valido in ordine temporale; serve a stabilire il corretto ordinamento delle scritture sui blocchi.
 	int prev_valid : 31;	//indica il precedente blocco reso valido in ordine temporale; serve a stabilire il corretto ordinamento delle scritture sui blocchi.
-	int is_valid : 2;		//flag che indica se il blocco è valido o meno.
-} __attribute__((packed));
+	int is_valid : 1;		//flag che indica se il blocco è valido o meno; è un campo a 1 bit.
+	int is_last : 1;		//flag che indica se il blocco è l'ultimo fisicamente presente nel device o meno.
+};
 
 //data block complete definition
 struct data_block_content {

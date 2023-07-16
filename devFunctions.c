@@ -116,7 +116,7 @@ asmlinkage int sys_put_data(char *source, size_t size)
         if (!(db_meta->is_valid))   //sto cercando un blocco libero, ovvero un blocco non valido.
             break;
 
-        else if (db_meta->is_valid && offset==(sb_disk->total_data_blocks)-1) { //arrivo qui se nessun nodo è libero.
+        else if (db_meta->is_valid && db_meta->is_last) {   //arrivo qui se nessun nodo è libero.
             printk("%s: impossibile eseguire la system call put_data(): non ci sono blocchi liberi\n", MOD_NAME);
             kfree(kernel_lvl_src);
             mutex_unlock(&(au_info.write_mutex));
@@ -132,7 +132,7 @@ asmlinkage int sys_put_data(char *source, size_t size)
     //aggiornamento del campo next_valid del vecchio ultimo blocco valido
     ret = set_block_metadata(global_sb, (sb_disk->last_valid)+2, offset, YES);
     if (ret < 0) {
-        printk("%s: impossibile eseguire la system call put_data(): si è verificato un errore con la scrittura dei metadati sul blocco %llu\n", MOD_NAME, sb_disk->last_valid);
+        printk("%s: impossibile eseguire la system call put_data(): si è verificato un errore con la scrittura dei metadati sul blocco %d\n", MOD_NAME, sb_disk->last_valid);
         kfree(kernel_lvl_src);
         mutex_unlock(&(au_info.write_mutex));
         printk("%s: [put_data] mutex_lock correttamente rilasciato\n", MOD_NAME);
@@ -183,6 +183,7 @@ __SYSCALL_DEFINEx(3, _get_data, int, offset, char *, destination, size_t, size)
 asmlinkage int sys_get_data(int offset, char *destination, size_t size)
 #endif
 {   
+    int readable_bytes;             //numero di byte effettivamente presentu nel blocco target prima del terminatore di stringa ('\0')
     int lost_bytes_copy_to_user;    //numero di byte (tra quelli letti con kernel_read()) che non è stato possibile consegnare all'utente con copy_to_user()
     struct onefilefs_sb_info *sb_disk;
     struct data_block_content *db_cont;
