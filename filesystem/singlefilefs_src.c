@@ -43,7 +43,6 @@ int singlefilefs_fill_super(struct super_block *sb, void *data, int silent) {
     struct onefilefs_inode *inode_disk;
     int num_mounted_blocks;
     int num_expected_blocks;
-    int ret;
 
     //controllo preliminare sulla dimensione della struct onefilefs_sb_info (che mantiene tutti i dati del superblocco): se eccede la dimensione di un blocco, c'è un GROSSO problema.
     if (sizeof(struct onefilefs_sb_info) > DEFAULT_BLOCK_SIZE) {
@@ -61,8 +60,8 @@ int singlefilefs_fill_super(struct super_block *sb, void *data, int silent) {
 	    return -EIO;    //-EIO = errore di input/output
     }
     sb_disk = (struct onefilefs_sb_info *)bh->b_data;
-    magic = sb_disk->user_sb.magic; //estrazione del magic number a partire dalle informazioni ottenute con sb_bread()
-    num_expected_blocks = sb_disk->user_sb.total_data_blocks;   //estrazione del numero massimo di blocchi che è stato imposto a tempo di compilazione (DATA_BLOCKS)
+    magic = sb_disk->magic; //estrazione del magic number a partire dalle informazioni ottenute con sb_bread()
+    num_expected_blocks = sb_disk->total_data_blocks;   //estrazione del numero massimo di blocchi che è stato imposto a tempo di compilazione (DATA_BLOCKS)
 
     brelse(bh);  //rilascio del buffer head bh
 

@@ -148,13 +148,13 @@ int main(int argc, char *argv[])
 				return -1;
 			}
 
-			struct_metadata.next_valid = block_index + 1;
+			if (block_index == num_data_blocks_to_write-1)	//caso in cui il blocco successivo sarà inizialmente invalido
+				struct_metadata.next_valid = -1;
+			else
+				struct_metadata.next_valid = block_index + 1;
+			
 			struct_metadata.prev_valid = block_index - 1;	//il blocco di indice 0 avrà prev_valid pari a -1; -1 significa "nessun blocco".
 			struct_metadata.is_valid = 1;
-			if (block_index == num_data_blocks-1)
-				struct_metadata.is_last = 1;
-			else
-				struct_metadata.is_last = 0;
 
 			//conversione di struct_metadata in stringa (char_metadata)
 			char_metadata = (unsigned char *)&struct_metadata;
@@ -207,10 +207,6 @@ int main(int argc, char *argv[])
 			struct_metadata.next_valid = -1;	//-1 significa "nessun blocco".
 			struct_metadata.prev_valid = -1;	//-1 significa "nessun blocco".
 			struct_metadata.is_valid = 0;
-			if (block_index == num_data_blocks-1)
-				struct_metadata.is_last = 1;
-			else
-				struct_metadata.is_last = 0;
 
 			//conversione di struct_metadata in stringa (char_metadata)
 			char_metadata = (unsigned char *)&struct_metadata;
