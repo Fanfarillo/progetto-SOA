@@ -226,9 +226,6 @@ int main(int argc, char *argv[])
 
 			}
 
-			printf("Metadata of datablock %d written successfully.\n", block_index);
-			fflush(stdout);
-
 			nbytes = DEFAULT_BLOCK_SIZE - METADATA_SIZE;
 			block_padding = malloc(nbytes);
 			memset(block_padding, 0, nbytes);
@@ -240,13 +237,13 @@ int main(int argc, char *argv[])
 				close(fd);
 				return -1;
 			}
-			printf("Padding in datablock %d written sucessfully.\n", block_index);
-			fflush(stdout);
 
 		}
 
 	}
 
+	printf("Padded datablocks written successfully.\n");
+	fflush(stdout);
 	free(block_padding);
 	close(fd);	//chiusura del file descriptor (i.e. del dispositivo)
 	return 0;

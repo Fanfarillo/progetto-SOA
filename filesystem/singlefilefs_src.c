@@ -4,6 +4,7 @@
 #include <linux/module.h>
 #include <linux/mutex.h>
 #include <linux/slab.h>
+#include <linux/srcu.h>
 #include <linux/string.h>
 #include <linux/time.h>
 #include <linux/timekeeping.h>
@@ -154,6 +155,7 @@ static void singlefilefs_kill_superblock(struct super_block *s) {
         return;
     }
 
+    cleanup_srcu_struct(&(au_info.srcu));   //cleanup struct srcu_struct
     kill_block_super(s);    //è lei che esegue effettivamente l'eliminazione del superblocco, eliminando le risorse ad esso associate.
     printk("%s: singlefilefs unmount successful\n", MOD_NAME);
     return;
@@ -169,11 +171,18 @@ struct dentry *singlefilefs_mount(struct file_system_type *fs_type, int flags, c
     //qui iniziano le variabili locali definite direttamente da me
     static DEFINE_MUTEX(w_mutex);   //dichiarazione e definizione del mutex per le scritture
     static DEFINE_MUTEX(o_mutex);   //dichiarazione e definizione del mutex per il parametro *off di dev_read()
+    int init_srcu_output;
     long unsigned int cmp_swap_output;
 
-    //inizializzazione dei campi di tipo atomic_t e struct mutex
+    //inizializzazione dei campi di tipo struct mutex e struct srcu_struct
     au_info.write_mutex = w_mutex;
     au_info.off_mutex = o_mutex;
+    
+    init_srcu_output = init_srcu_struct(&(au_info.srcu));
+    if (init_srcu_output != 0) {    //error
+        printk("%s: error mounting onefilefs", MOD_NAME);
+        return ERR_PTR(-ENOMEM);    //-ENOMEM = errore di esaurimento di memoria; è una causa tipica del fallimento di init_srcu_struct().
+    }
 
     cmp_swap_output = __sync_val_compare_and_swap(&(au_info.is_mounted), 0, 1);
     if (cmp_swap_output != 0) { //caso in cui il file system era già montato

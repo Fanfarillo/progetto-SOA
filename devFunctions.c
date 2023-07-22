@@ -16,6 +16,7 @@
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/mutex.h>
+#include <linux/srcu.h>
 #include <linux/syscalls.h>
 #include <linux/types.h>
 #include <linux/version.h>
@@ -127,7 +128,8 @@ asmlinkage int sys_put_data(char *source, size_t size)
 
     }
 
-    //TODO: qui va l'attesa della fine del grace period.
+    //attesa della fine del grace period
+    synchronize_srcu(&(au_info.srcu));
 
     //aggiornamento del campo next_valid del vecchio ultimo blocco valido
     ret = set_block_metadata(global_sb, (sb_disk->last_valid)+2, offset, YES);
@@ -183,6 +185,7 @@ __SYSCALL_DEFINEx(3, _get_data, int, offset, char *, destination, size_t, size)
 asmlinkage int sys_get_data(int offset, char *destination, size_t size)
 #endif
 {   
+    int srcu_idx;
     int lost_bytes_copy_to_user;    //numero di byte (tra quelli letti con kernel_read()) che non è stato possibile consegnare all'utente con copy_to_user()
     struct onefilefs_sb_info *sb_disk;
     struct data_block_content *db_cont;
@@ -206,17 +209,23 @@ asmlinkage int sys_get_data(int offset, char *destination, size_t size)
         size = DEFAULT_BLOCK_SIZE-METADATA_SIZE;    //in tal modo si leggono esclusivamente i dati posti nel blocco
     }
 
-    //TODO: qui va l'acquisizione dell'RCU read lock.
+    //acquisizione della sleepable RCU read lock
+    srcu_idx = srcu_read_lock(&(au_info.srcu));
+    printk("%s: [get_data] srcu_read_lock correttamente acquisito\n", MOD_NAME);
 
     //recupero dei dati memorizzati nel superblocco
     sb_disk = get_superblock_info(global_sb);
     if (sb_disk == NULL) {
         printk("%s: impossibile eseguire la system call get_data(): si è verificato un errore col recupero dei dati del superblocco\n", MOD_NAME);
+        srcu_read_unlock(&(au_info.srcu), srcu_idx);
+        printk("%s: [get_data] srcu_read_lock correttamente rilasciato\n", MOD_NAME);
         atomic_fetch_add(-1, &(au_info.usages));
         return -EIO; //-EIO = errore di input/output
     }
     if (offset < 0 || offset >= sb_disk->total_data_blocks) {    //stiamo assumendo offset che vanno da 0 a NBLOCKS-1.
         printk("%s: impossibile eseguire la system call get_data(): il blocco specificato (%d) non esiste\n", MOD_NAME, offset);
+        srcu_read_unlock(&(au_info.srcu), srcu_idx);
+        printk("%s: [get_data] srcu_read_lock correttamente rilasciato\n", MOD_NAME);
         atomic_fetch_add(-1, &(au_info.usages));
         return -EINVAL; //-EINVAL = parametri non validi (in questo caso int offset)
     }
@@ -225,11 +234,15 @@ asmlinkage int sys_get_data(int offset, char *destination, size_t size)
     db_cont = get_block_content(global_sb, offset+2);   //il +2 è dato dal fatto che bisogna contare anche superblocco e inode del file.
     if (db_cont == NULL) {
         printk("%s: impossibile eseguire la system call get_data(): si è verificato un errore col recupero dei dati del blocco %d\n", MOD_NAME, offset);
+        srcu_read_unlock(&(au_info.srcu), srcu_idx);
+        printk("%s: [get_data] srcu_read_lock correttamente rilasciato\n", MOD_NAME);
         atomic_fetch_add(-1, &(au_info.usages));
         return -EIO; //-EIO = errore di input/output
     }
 
-    //TODO: qui va il rilascio dell'RCU read lock.
+    //rilascio della sleepable RCU read lock
+    srcu_read_unlock(&(au_info.srcu), srcu_idx);
+    printk("%s: [get_data] srcu_read_lock correttamente rilasciato\n", MOD_NAME);
     printk("%s: lettura sul blocco %d - next_valid=%d - prev_valid=%d - is_valid=%d - first_valid=%lld - last_valid=%lld\n", MOD_NAME, offset, db_cont->metadata.next_valid, db_cont->metadata.prev_valid, db_cont->metadata.is_valid, sb_disk->first_valid, sb_disk->last_valid);
 
     //check sulla validità del blocco target
@@ -323,7 +336,8 @@ asmlinkage int sys_invalidate_data(int offset)
         return -ENODATA; //-ENODATA = nessun dato disponibile
     }
 
-    //TODO: qui va l'attesa della fine del grace period.
+    //attesa della fine del grace period
+    synchronize_srcu(&(au_info.srcu));
 
     //caso in cui il blocco target era l'unico blocco valido
     if (offset == sb_disk->first_valid && offset == sb_disk->last_valid) {
@@ -428,6 +442,7 @@ static ssize_t dev_read(struct file *filp, char *buf, size_t len, loff_t *off) {
     struct onefilefs_sb_info *sb_disk;
     struct data_block_content *db_cont;
     char *read_data;
+    int srcu_idx;
 
     //incremento del contatore atomico degli utilizzi del file system
     atomic_fetch_add(1, &(au_info.usages));
@@ -454,17 +469,24 @@ static ssize_t dev_read(struct file *filp, char *buf, size_t len, loff_t *off) {
         }
         printk("%s: [dev_read] mutex_lock correttamente acquisito\n", MOD_NAME);
 
-        //TODO: qui va l'acquisizione dell'RCU read lock.
+        //acquisizione della sleepable RCU read lock
+        srcu_idx = srcu_read_lock(&(au_info.srcu));
+        printk("%s: [dev_read] srcu_read_lock correttamente acquisito\n", MOD_NAME);
 
         //recupero il superblocco perché mi serve per ottenere il primo blocco valido.
         sb_disk = get_superblock_info(filp->f_path.dentry->d_inode->i_sb);
         if (sb_disk == NULL) {
             printk("%s: impossibile leggere il dispositivo: si è verificato un errore col recupero dei dati del superblocco\n", MOD_NAME);
+            srcu_read_unlock(&(au_info.srcu), srcu_idx);
             mutex_unlock(&(au_info.off_mutex));
-            printk("%s: [dev_read] mutex_lock correttamente rilasciato\n", MOD_NAME);
+            printk("%s: [dev_read] srcu_read_lock e mutex_lock correttamente rilasciati\n", MOD_NAME);
             atomic_fetch_add(-1, &(au_info.usages));
             return -EIO; //-EIO = errore di input/output
         }
+
+        //rilascio della sleepable RCU read lock
+        srcu_read_unlock(&(au_info.srcu), srcu_idx);
+        printk("%s: [dev_read] srcu_read_lock correttamente rilasciato\n", MOD_NAME);
 
         //controllo se c'è almeno un blocco da leggere. Se non c'è, imposto a YES is_last_call.
         if (sb_disk->first_valid != -1) {
@@ -483,7 +505,6 @@ static ssize_t dev_read(struct file *filp, char *buf, size_t len, loff_t *off) {
 
         if (len == 0) {
             printk("%s: len == 0: nothing to do\n", MOD_NAME);
-            //TODO: qui va il rilascio dell'RCU read lock.
             is_first_call = YES;
             mutex_unlock(&(au_info.off_mutex));
             printk("%s: [dev_read] mutex_lock correttamente rilasciato\n", MOD_NAME);
@@ -496,16 +517,25 @@ static ssize_t dev_read(struct file *filp, char *buf, size_t len, loff_t *off) {
         block_to_read = (*off / DEFAULT_BLOCK_SIZE) + 2; //the value 2 accounts for superblock and file-inode on device.
         printk("%s: read operation must access block %d of the device", MOD_NAME, block_to_read-2);
 
+        //acquisizione della sleepable RCU read lock
+        srcu_idx = srcu_read_lock(&(au_info.srcu));
+        printk("%s: [dev_read] srcu_read_lock correttamente acquisito\n", MOD_NAME);
+
         //acquisizione del contenuto del blocco da leggere (quello di cui abbiamo appena calcolato l'indice).
         db_cont = get_block_content(filp->f_path.dentry->d_inode->i_sb, block_to_read);
         if(!db_cont){
             printk("%s: impossibile leggere il dispositivo: si è verificato un errore con la lettura del blocco %d\n", MOD_NAME, block_to_read);
             is_first_call = YES;
+            srcu_read_unlock(&(au_info.srcu), srcu_idx);
             mutex_unlock(&(au_info.off_mutex));
-            printk("%s: [dev_read] mutex_lock correttamente rilasciato\n", MOD_NAME);
+            printk("%s: [dev_read] srcu_read_lock e mutex_lock correttamente rilasciati\n", MOD_NAME);
             atomic_fetch_add(-1, &(au_info.usages));
 	        return -EIO;
         }
+
+        //rilascio della sleepable RCU read lock
+        srcu_read_unlock(&(au_info.srcu), srcu_idx);
+        printk("%s: [dev_read] srcu_read_lock correttamente rilasciato\n", MOD_NAME);
 
         read_data = &(db_cont->payload[0]); //l'offset da cui far partire ciascuna lettura di un singolo blocco deve corrispondere alla fine dei metadati.
         //ora si copiano i dati dal buffer del kernel (db_cont+METADATA_SIZE) al buffer dell'applicazione (buf), passato come parametro a onefilefs_read().
@@ -527,7 +557,6 @@ static ssize_t dev_read(struct file *filp, char *buf, size_t len, loff_t *off) {
     }
     else {  //caso in cui la lettura è stata completata
         printk("%s: read operation completed\n", MOD_NAME);
-        //TODO: qui va il rilascio dell'RCU read lock.
         is_first_call = YES;
         is_last_call = NO;
         mutex_unlock(&(au_info.off_mutex));
